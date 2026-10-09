@@ -1,0 +1,339 @@
+:root {
+  --ink: #293b32;
+  --muted: #687665;
+  --paper: #faf9f5;
+  --surface: #fffefa;
+  --side: #f0f2ec;
+  --soft: #e6ebdf;
+  --line: #dce2d5;
+  --green: #344e40;
+  --accent: #43684e;
+  --on-accent: #fffefa;
+  --hover: #e6ecdf;
+  --code: #f1f2ea;
+  --error: #a34436;
+  --added: #e4f2e4;
+  --removed: #fae5df;
+  color-scheme: light;
+}
+:root[data-theme="sand"] {
+  --ink: #4d4034;
+  --muted: #827264;
+  --paper: #fcf8f0;
+  --surface: #fffdf7;
+  --side: #f2ece0;
+  --soft: #eaddc5;
+  --line: #e5dac7;
+  --green: #70553e;
+  --accent: #8b5e35;
+  --on-accent: #fffaf0;
+  --hover: #eee2ce;
+  --code: #f5eddf;
+}
+:root[data-theme="mist"] {
+  --ink: #2c4251;
+  --muted: #647b89;
+  --paper: #f5f8fa;
+  --surface: #fcfeff;
+  --side: #eaf0f4;
+  --soft: #dbe6ed;
+  --line: #d7e2e9;
+  --green: #3d6078;
+  --accent: #456f8d;
+  --on-accent: #f6fbff;
+  --hover: #dee9f0;
+  --code: #edf2f6;
+}
+:root[data-theme="night"] {
+  --ink: #d8e1da;
+  --muted: #a1b3a7;
+  --paper: #1b2521;
+  --surface: #222f29;
+  --side: #17221d;
+  --soft: #2e4034;
+  --line: #374b3d;
+  --green: #bed2b9;
+  --accent: #abc5a1;
+  --on-accent: #1c2a20;
+  --hover: #2b3d31;
+  --code: #233128;
+  --error: #ffb2a5;
+  --added: #294733;
+  --removed: #503731;
+  color-scheme: dark;
+}
+html,
+body,
+.app-shell,
+.main-workspace,
+.writing-main,
+.editor-surface,
+.cm-editor,
+.cm-scroller {
+  background: var(--paper);
+  color: var(--ink);
+}
+.sidebar {
+  background: var(--side);
+}
+.app-header,
+.editor-toolbar,
+.tabs,
+.status-bar,
+.context-panel {
+  background: var(--paper);
+  border-color: var(--line);
+}
+.modal,
+.capture-card,
+.quick-thought,
+.settings-result,
+.source-review,
+.proposal-editor,
+.vault-switch,
+.recent-notes > button,
+.start-actions > button {
+  background: var(--surface);
+  border-color: var(--line);
+  color: var(--ink);
+}
+input,
+textarea,
+select {
+  background: var(--surface);
+  border-color: var(--line);
+  color: var(--ink);
+}
+.brand-mark,
+.properties-fold,
+.note-properties > span,
+.capture-select b,
+.count-badge {
+  background: var(--soft);
+  color: var(--accent);
+}
+.primary,
+.new-note {
+  background: var(--green);
+  color: var(--on-accent);
+}
+.secondary {
+  background: var(--surface);
+  color: var(--ink);
+  border-color: var(--line);
+}
+nav button,
+.note-list button span,
+.breadcrumbs strong,
+.context-title,
+.related-link,
+.outline-link,
+.editor-toolbar button,
+.tabs button {
+  color: var(--ink);
+}
+nav button.active,
+.note-list button:hover,
+.icon:hover,
+.tabs button:hover,
+.theme-choice:hover {
+  background: var(--hover);
+  color: var(--accent);
+}
+.note-list button.active,
+.tabs button.active,
+.proposal-tabs button[aria-pressed="true"] {
+  background: var(--surface);
+  color: var(--accent);
+}
+.muted,
+.eyebrow,
+.breadcrumbs > span,
+.section-label,
+.note-list button small,
+.notes-heading,
+.sidebar-footer > div,
+.status-bar,
+.context-panel p,
+.context-panel h3,
+.context-note span,
+.capture-info small,
+.quick-thought footer > span,
+.page-heading p,
+.empty p,
+.theme-choices + p,
+.start-page > p {
+  color: var(--muted);
+}
+.sidebar-divider {
+  background: var(--line);
+}
+.sidebar-footer,
+.search-box,
+.context-note,
+.settings-section,
+.editor-toolbar,
+.tabs,
+.modal header,
+.modal-footer,
+.capture-info,
+.proposal-editor > header,
+.proposal-editor > footer {
+  border-color: var(--line);
+}
+a,
+.related-link:hover,
+.outline-link:hover,
+.text-button {
+  color: var(--accent);
+}
+.md-rendered table,
+.markdown-preview table,
+.md-rendered td,
+.md-rendered th {
+  border-color: var(--line);
+}
+.md-rendered th,
+.md-rendered pre,
+.md-rendered .katex-display,
+.markdown-preview pre,
+.properties-fold {
+  background: var(--code);
+}
+.cm-heading span {
+  text-decoration: none !important;
+}
+.md-inline {
+  display: inline;
+  padding: 0;
+  line-height: inherit;
+}
+.md-inline a {
+  display: inline;
+}
+.md-inline .katex {
+  font-size: 1.12em;
+}
+.cm-editor .cm-cursor {
+  border-left-color: var(--ink);
+}
+.cm-editor .cm-selectionBackground,
+.cm-editor.cm-focused .cm-selectionBackground {
+  background: var(--soft);
+}
+.cm-editor .cm-panels {
+  background: var(--side);
+  color: var(--ink);
+}
+.cm-heading {
+  color: var(--ink);
+}
+.cm-strong {
+  color: var(--ink);
+}
+.md-rendered,
+.markdown-preview {
+  color: var(--ink);
+}
+.diff {
+  background: var(--surface);
+  color: var(--ink);
+}
+.diff .added {
+  background: var(--added);
+  color: var(--ink);
+}
+.diff .removed {
+  background: var(--removed);
+  color: var(--ink);
+}
+.error-text,
+.toast.error,
+.inline-error {
+  color: var(--error);
+}
+.theme-choices {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 9px;
+}
+.theme-choice {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 11px 5px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+}
+.theme-choice[aria-pressed="true"] {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.theme-choice i {
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  border: 1px solid #0002;
+}
+.theme-forest i {
+  background: #789174;
+}
+.theme-sand i {
+  background: #b89162;
+}
+.theme-mist i {
+  background: #7298b1;
+}
+.theme-night i {
+  background: #263b2e;
+}
+:root[data-theme="night"] .toast {
+  background: #304334;
+  color: var(--ink);
+}
+:root[data-theme="night"] .capture-actions button,
+:root[data-theme="night"] .jobs article,
+:root[data-theme="night"] .ordered-list > div,
+:root[data-theme="night"] .history-grid pre {
+  background: var(--surface);
+  color: var(--ink);
+  border-color: var(--line);
+}
+:root[data-theme="night"] .cm-editor .ͼb,
+:root[data-theme="night"] .cm-editor .ͼc {
+  color: #a9caaa;
+}
+:root[data-theme="night"] .uncertainties,
+:root[data-theme="night"] .warning-bar {
+  background: #423d25;
+  color: #f1df9f;
+}
+:root[data-theme="night"] .state {
+  background: var(--soft);
+  color: var(--ink);
+}
+.tab-strip,
+.editor-status {
+  background: var(--paper);
+  color: var(--muted);
+  border-color: var(--line);
+}
+.tab-strip > div.active {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+.note-list button.active span {
+  color: var(--ink);
+}
+.cm-content .cm-strong {
+  color: var(--ink);
+}
+.properties-fold {
+  border-color: var(--line);
+}
+.new-note kbd {
+  color: var(--on-accent);
+  border-color: var(--accent);
+}

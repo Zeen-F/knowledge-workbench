@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "knowledge-workbench": {
+      "command": "node",
+      "args": ["dist/mcp.cjs"],
+      "cwd": ".",
+      "startup_timeout_sec": 30,
+      "tool_timeout_sec": 60
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "knowledge-workbench-local",
+  "interface": { "displayName": "Knowledge Workbench Local" },
+  "plugins": [
+    {
+      "name": "knowledge-workbench",
+      "source": { "source": "local", "path": "./plugins/knowledge-workbench" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "category": "Productivity"
+    }
+  ]
+}

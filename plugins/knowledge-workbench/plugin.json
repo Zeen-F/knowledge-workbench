@@ -1,0 +1,19 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "knowledge-workbench",
+  "version": "0.1.0-alpha.1",
+  "description": "读取知识工作台共享的学习材料，提交可追溯的待审知识卡与学习记录。",
+  "author": { "name": "Zeen-F" },
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "知识工作台",
+        "shortDescription": "学习材料整理与草稿审核",
+        "category": "Productivity",
+        "capabilities": ["Read", "Write"],
+        "defaultPrompt": ["整理我在知识工作台共享的批次"],
+        "brandColor": "#365d51"
+      }
+    }
+  }
+}

@@ -12,7 +12,9 @@ npm.cmd run dev
 ```powershell
 npm.cmd run check
 npm.cmd run test:mcp
+npm.cmd run test:codex-host
 npm.cmd run test:ui
+npm.cmd run test:capture
 npm.cmd run test:paperdesk -- <纸间源码目录>
 npm.cmd run desktop:pack
 npm.cmd run desktop:dist
@@ -33,3 +35,9 @@ npm.cmd run desktop:dist
 自动测试使用合成资料，故障测试会主动注入读写错误。实际模型效果需要用户配置的服务与模型。中文字符输入测试不替代真实输入法候选、组合输入和长时间写作检查。截图按每个显示器单独框选；可从任意显示器启动，单次选区不跨越两个屏幕。
 
 构建依赖的审计中，electron-builder 间接引入 sprintf-js 的中等级拒绝服务问题；当前上游最新 sprintf-js 仍在受影响范围。本次不执行自动降级构建器。运行时依赖审计与完整构建依赖审计分别记录，CI 检查运行时依赖。
+
+`test:codex-host` 需要已安装的 Codex CLI，使用隔离的 Codex 配置目录，通过真实 app-server 发现工具、读取共享材料和提交草稿，不发起模型对话。`test:capture` 会暂时覆盖桌面为合成画面并连续框选，验证原图保存、像素、取消和去重；请在可操作桌面的会话中运行。
+
+仓库保留可分发的插件模板。安装时生成的本机插件采用 Codex 兼容插件结构，把绝对运行时路径写入 `.mcp.json`，以适配带空格和中文的 Windows 安装位置。已打包应用使用自带 Electron 的 Node 运行时，使用者无需另外安装 Node.js。`workbench_open` 的唤起配置只接受安装时记录的路径。
+
+版本控制不包含真实笔记、截图、密钥、本机队列或安装包。GitHub 的 Windows checks 检查源码与桌面基本流程；手动 Windows package 工作流提供安装包构建产物。Paperdesk 导出提交在其独立分支，合并前须与纸间发布安排协调。
