@@ -89,6 +89,7 @@ export default function App() {
   const [, draw] = useState(0),
     tabs = useRef<Record<string, Tab>>({}),
     saves = useRef<Partial<Record<string, Promise<void>>>>({}),
+    draftWrites = useRef<Partial<Record<string, Promise<void>>>>({}),
     timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({}),
     editor = useRef<EditorHandle>(null),
     imageInput = useRef<HTMLInputElement>(null),
@@ -106,6 +107,20 @@ export default function App() {
   const localKey = (p: string) =>
     `kwb-draft:${statusRef.current?.vault?.id}:${p}`;
   const recordDraft = (p: string, t: Tab) => {
+    if (window.workbench?.panel) {
+      // Opaque MCP sandboxes may not provide localStorage. Persist recovery
+      // drafts through the local service, in order, before the final save.
+      const body = { path: p, content: t.content, expectedHash: t.hash };
+      const pending = (draftWrites.current[p] || Promise.resolve())
+        .catch(() => {})
+        .then(() => api("PUT", "/draft", body))
+        .then(() => {});
+      draftWrites.current[p] = pending;
+      void pending.catch((e) =>
+        notify("本机草稿保存失败，请保留此面板：" + e.message, true),
+      );
+      return;
+    }
     try {
       localStorage.setItem(
         localKey(p),
@@ -237,6 +252,7 @@ export default function App() {
         t.status = "saving";
         render();
         try {
+          await draftWrites.current[path]?.catch(() => {});
           await api("PUT", "/draft", { path, content, expectedHash: hash });
           const saved = await api<Note>("PUT", "/note", {
             path,

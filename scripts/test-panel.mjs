@@ -1,0 +1,344 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import assert from "node:assert/strict";
+import { chromium, expect } from "@playwright/test";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { startService } from "../server/app.ts";
+import { seed } from "./seed.mjs";
+import { removeTestDirectory } from "./test-cleanup.mjs";
+
+const root = fs.mkdtempSync(path.join(os.tmpdir(), "kwb-native-panel-"));
+const vault = path.join(root, "中文 测试库");
+seed(vault);
+const service = await startService({ vaultDir: vault, dataDir: root });
+fs.writeFileSync(
+  path.join(root, "runtime.json"),
+  JSON.stringify({
+    baseUrl: service.baseUrl,
+    token: service.token,
+    vaultId: service.vaultId,
+  }),
+);
+const client = new Client({ name: "native-panel-test", version: "1" });
+let browser;
+const evidence = path.resolve("output/playwright/native-panel");
+fs.mkdirSync(evidence, { recursive: true });
+const errors = [],
+  requests = [],
+  messages = [];
+try {
+  await client.connect(
+    new StdioClientTransport({
+      command: process.execPath,
+      args: ["plugins/knowledge-workbench/dist/mcp.cjs"],
+      env: { ...process.env, KWB_PROFILE: root },
+      stderr: "pipe",
+    }),
+  );
+  const tools = (await client.listTools()).tools;
+  const opener = tools.find((t) => t.name === "workbench_open");
+  assert.equal(opener.title, "打开知识工作台");
+  const resource = await client.readResource({
+    uri: opener._meta.ui.resourceUri,
+  });
+  const html = resource.contents[0].text;
+  const image = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=",
+    "base64",
+  );
+  const material = service.captures.add({
+    title: "原图与想法",
+    text: "合成材料，只用于面板验收。",
+    image: "data:image/png;base64," + image.toString("base64"),
+  });
+  browser = await chromium.launch({
+    headless: true,
+    ...(process.env.KWB_TEST_BROWSER
+      ? { channel: process.env.KWB_TEST_BROWSER }
+      : {}),
+  });
+  const page = await browser.newPage({
+    viewport: { width: 1280, height: 850 },
+  });
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.exposeFunction("hostRequest", async (message) => {
+    if (message.method === "ui/initialize")
+      return {
+        protocolVersion: "2026-01-26",
+        hostInfo: { name: "test-host", version: "1" },
+        hostCapabilities: {
+          serverTools: {},
+          openLinks: {},
+          message: { text: {} },
+        },
+        hostContext: {
+          theme: "light",
+          displayMode: "inline",
+          availableDisplayModes: ["inline", "fullscreen"],
+        },
+      };
+    if (message.method === "tools/call") {
+      const result = await client.callTool(message.params);
+      // No local note content in public tool output, including error details.
+      if (message.params.name.startsWith("workbench_panel_")) {
+        assert.ok(
+          !JSON.stringify({
+            content: result.content,
+            structuredContent: result.structuredContent,
+          }).includes("合成材料"),
+        );
+      }
+      return result;
+    }
+    if (message.method === "ui/message") {
+      messages.push(message.params);
+      return {};
+    }
+    if (message.method === "ui/open-link") return {};
+    throw new Error("Unsupported test host request: " + message.method);
+  });
+  await page.route("http://127.0.0.1:59999/**", (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: '<html><body style="margin:0"><iframe id="panel" sandbox="allow-scripts" style="width:100%;height:100vh;border:0"></iframe></body></html>',
+    }),
+  );
+  await page.goto("http://127.0.0.1:59999/");
+  await page.evaluate(() => {
+    window.addEventListener("message", async (event) => {
+      if (event.source !== document.querySelector("iframe").contentWindow)
+        return;
+      const m = event.data;
+      if (!m.method || m.id === undefined) return;
+      try {
+        const result = await window.hostRequest(m);
+        event.source.postMessage({ jsonrpc: "2.0", id: m.id, result }, "*");
+      } catch (e) {
+        event.source.postMessage(
+          {
+            jsonrpc: "2.0",
+            id: m.id,
+            error: { code: -32603, message: e.message },
+          },
+          "*",
+        );
+      }
+    });
+  });
+  page.on("request", (r) => {
+    if (!/^(blob:|data:)/.test(r.url())) requests.push(r.url());
+  });
+  const load = () =>
+    page.evaluate((html) => {
+      document.querySelector("iframe").srcdoc = html.replace(
+        "<head>",
+        "<head><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'\">",
+      );
+    }, html);
+  await load();
+  const frame = page.frameLocator("#panel");
+  await frame
+    .getByRole("button", { name: "从一个问题开始", exact: false })
+    .first()
+    .click();
+  await expect(frame.locator(".katex-display")).toBeVisible();
+  const editor = frame.getByLabel("笔记编辑器");
+  await editor.click();
+  await editor.press("Control+End");
+  await editor.press("Enter");
+  await page.keyboard.insertText("原生面板中文保存验证");
+  await editor.press("Control+s");
+  await expect
+    .poll(() => fs.readFileSync(path.join(vault, "从一个问题开始.md"), "utf8"))
+    .toContain("原生面板中文保存验证");
+  await page.screenshot({ path: path.join(evidence, "editor.png") });
+  await frame.getByRole("button", { name: "设置", exact: true }).click();
+  await expect(
+    frame.getByText("Codex 原生面板已连接。", { exact: false }),
+  ).toBeVisible();
+  await expect(
+    frame.getByPlaceholder("输入密钥，仅在本机加密保存"),
+  ).toHaveCount(0);
+  await frame.getByRole("button", { name: "夜读", exact: true }).click();
+  await frame.getByRole("button", { name: "完成", exact: true }).click();
+  await frame
+    .getByRole("button", { name: /^收集箱/ })
+    .first()
+    .click();
+  await expect(frame.locator(".capture-card img")).toBeVisible();
+  await expect(frame.locator(".capture-card img")).toHaveAttribute(
+    "src",
+    /^blob:/,
+  );
+  const originalImage = await client.callTool({
+    name: "workbench_panel_read",
+    arguments: {
+      route: "/assets?path=" + encodeURIComponent(material.ref.assetPath),
+      vaultId: service.vaultId,
+    },
+  });
+  assert.equal(
+    originalImage._meta.panel.data.dataUrl,
+    "data:image/png;base64," + image.toString("base64"),
+  );
+  await expect
+    .poll(() =>
+      frame.locator(".capture-card img").evaluate((img) => img.naturalWidth),
+    )
+    .toBe(1);
+  const job = service.processing.create([material.id], [], "codex", "核对来源");
+  await frame
+    .getByRole("button", { name: "交给当前 Codex 对话", exact: true })
+    .click();
+  await expect(
+    frame.getByRole("button", { name: "已发送", exact: true }),
+  ).toBeDisabled();
+  assert.equal(messages.length, 1);
+  assert.ok(messages[0].content[0].text.includes(job.id));
+  await page.screenshot({ path: path.join(evidence, "inbox.png") });
+  const draft = service.processing.submit(
+    job.id,
+    "native-panel-review",
+    {
+      title: "原生审核测试",
+      action: "create",
+      markdown: "# 待审核\n\n合成结果，未经科学验证。",
+      sourceIds: [material.id],
+      unresolved: ["核对公式条件"],
+    },
+    job.snapshot.inputHash,
+  );
+  await frame
+    .getByRole("button", { name: /^待审稿/ })
+    .first()
+    .click();
+  await expect(
+    frame.getByRole("button", { name: "确认并保存", exact: true }),
+  ).toBeVisible();
+  await frame.getByLabel("笔记编辑器").click();
+  await frame.getByLabel("笔记编辑器").press("Control+a");
+  await page.keyboard.insertText("# 已审核\n\n用户修改后接受，仍需核对。");
+  await frame.getByRole("button", { name: "确认并保存", exact: true }).click();
+  await expect
+    .poll(
+      () =>
+        service.processing.proposals().find((p) => p.id === draft.id)?.status,
+    )
+    .toBe("accepted");
+  await page.screenshot({ path: path.join(evidence, "review.png") });
+  await load();
+  await frame
+    .getByRole("button", { name: "从一个问题开始", exact: false })
+    .first()
+    .click();
+  await expect(editor).toContainText("原生面板中文保存验证");
+  await editor.click();
+  await editor.press("Control+End");
+  await page.keyboard.insertText("\n关闭面板前保存验证");
+  await page.evaluate(
+    () =>
+      new Promise((resolve, reject) => {
+        const child = document.querySelector("iframe").contentWindow;
+        const timer = setTimeout(() => {
+          window.removeEventListener("message", receive);
+          reject(new Error("teardown timeout"));
+        }, 10000);
+        function receive(event) {
+          if (event.source !== child || event.data?.id !== "test-teardown")
+            return;
+          clearTimeout(timer);
+          window.removeEventListener("message", receive);
+          event.data.error
+            ? reject(new Error(event.data.error.message))
+            : resolve();
+        }
+        window.addEventListener("message", receive);
+        child.postMessage(
+          {
+            jsonrpc: "2.0",
+            id: "test-teardown",
+            method: "ui/resource-teardown",
+            params: {},
+          },
+          "*",
+        );
+      }),
+  );
+  assert.ok(
+    fs
+      .readFileSync(path.join(vault, "从一个问题开始.md"), "utf8")
+      .includes("关闭面板前保存验证"),
+  );
+  await load();
+  await frame
+    .getByRole("button", { name: "从一个问题开始", exact: false })
+    .first()
+    .click();
+  await expect(editor).toContainText("关闭面板前保存验证");
+  await page.setViewportSize({ width: 620, height: 850 });
+  await page.screenshot({ path: path.join(evidence, "narrow.png") });
+  // Refuse stale edits, preserving the version from outside the panel.
+  const before = service.vault.read("从一个问题开始.md");
+  service.vault.save(before.path, before.content + "\n外部修改\n", before.hash);
+  const conflict = await client.callTool({
+    name: "workbench_panel_write",
+    arguments: {
+      vaultId: service.vaultId,
+      method: "PUT",
+      route: "/note",
+      body: {
+        path: before.path,
+        content: "不得覆盖",
+        expectedHash: before.hash,
+      },
+    },
+  });
+  assert.equal(conflict.isError, true);
+  assert.equal(conflict._meta.panel.code, "VERSION_CONFLICT");
+  assert.ok(service.vault.read(before.path).content.includes("外部修改"));
+  const runtimePath = path.join(root, "runtime.json");
+  const runtime = fs.readFileSync(runtimePath, "utf8");
+  fs.writeFileSync(
+    runtimePath,
+    JSON.stringify({ ...JSON.parse(runtime), vaultId: "0".repeat(64) }),
+  );
+  const changed = await client.callTool({
+    name: "workbench_panel_read",
+    arguments: { route: "/notes", vaultId: service.vaultId },
+  });
+  assert.equal(changed._meta.panel.code, "VAULT_CHANGED");
+  fs.writeFileSync(runtimePath, runtime);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(requests, []);
+  const result = {
+    passed: true,
+    checks: [
+      "native-resource",
+      "real-MCP-transport",
+      "sandbox-no-network",
+      "edit-save-reopen",
+      "teardown-flush",
+      "math",
+      "theme",
+      "original-image",
+      "explicit-message-once",
+      "review-accept",
+      "version-conflict",
+      "vault-pinning",
+    ],
+    host: "browser protocol harness; not Codex desktop UI",
+    modelInvoked: false,
+  };
+  fs.writeFileSync(
+    path.join(evidence, "result.json"),
+    JSON.stringify(result, null, 2),
+  );
+  console.log(JSON.stringify(result));
+} finally {
+  await browser?.close();
+  await client.close();
+  await service.close();
+  await removeTestDirectory(root, os.tmpdir());
+}

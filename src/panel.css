@@ -1,0 +1,36 @@
+.native-panel .app-shell {
+  height: 100vh;
+  min-height: 520px;
+}
+.native-panel #root > [role="alert"] {
+  padding: 24px;
+}
+@media (max-width: 680px) {
+  .native-panel .sidebar {
+    width: 162px;
+    padding: 16px 8px 0;
+  }
+  .native-panel .brand {
+    margin: 0 4px 16px;
+    gap: 6px;
+  }
+  .native-panel .brand strong {
+    font-size: 15px;
+  }
+  .native-panel .brand-mark {
+    display: none;
+  }
+  .native-panel .search-box input {
+    width: 90px;
+  }
+  .native-panel .page-heading {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .native-panel .context-panel {
+    display: none;
+  }
+  .native-panel .start-actions {
+    flex-direction: column;
+  }
+}

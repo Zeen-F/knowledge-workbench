@@ -159,6 +159,8 @@ export const transferSchema = z.object({
 });
 
 export interface DesktopBridge {
+  panel?: boolean;
+  sendToCodex?(text: string): Promise<void>;
   chooseVault(): Promise<void>;
   capture(): Promise<void>;
   invoke(method: string, route: string, body?: unknown): Promise<any>;

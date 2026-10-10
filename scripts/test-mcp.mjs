@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import assert from "node:assert/strict";
+import { removeTestDirectory } from "./test-cleanup.mjs";
 import { startService } from "../server/app.ts";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kwb-mcp-")),
@@ -37,7 +38,57 @@ try {
     }),
   );
   const tools = (await client.listTools()).tools;
-  assert.equal(tools.length, 7);
+  assert.equal(tools.length, 9);
+  const open = tools.find((t) => t.name === "workbench_open");
+  assert.equal(open.title, "打开知识工作台");
+  assert.deepEqual(open._meta["openai/ui"].entrypoints, [
+    { type: "global" },
+    { type: "thread" },
+  ]);
+  for (const name of ["workbench_panel_read", "workbench_panel_write"]) {
+    assert.deepEqual(tools.find((t) => t.name === name)._meta.ui.visibility, [
+      "app",
+    ]);
+  }
+  const resource = await client.readResource({
+    uri: open._meta.ui.resourceUri,
+  });
+  assert.equal(resource.contents[0].mimeType, "text/html;profile=mcp-app");
+  assert.ok(resource.contents[0].text.includes("<html"));
+  assert.ok(!resource.contents[0].text.includes(service.token));
+  const privateRead = await client.callTool({
+    name: "workbench_panel_read",
+    arguments: { route: "/captures", vaultId: service.vaultId },
+  });
+  assert.ok(privateRead._meta.panel.data.some((c) => c.id === capture.id));
+  assert.ok(!JSON.stringify(privateRead.content).includes(capture.id));
+  assert.ok(
+    !JSON.stringify(privateRead.structuredContent).includes(capture.id),
+  );
+  for (const args of [
+    { route: "/captures" },
+    { route: "/captures", vaultId: "0".repeat(64) },
+    { route: "/mcp/batches", vaultId: service.vaultId },
+  ])
+    assert.equal(
+      (await client.callTool({ name: "workbench_panel_read", arguments: args }))
+        .isError,
+      true,
+    );
+  assert.equal(
+    (
+      await client.callTool({
+        name: "workbench_panel_write",
+        arguments: {
+          method: "PUT",
+          route: "/settings/provider",
+          vaultId: service.vaultId,
+          body: {},
+        },
+      })
+    ).isError,
+    true,
+  );
   assert.equal(
     tools.some((t) => /accept|save_note/.test(t.name)),
     false,
@@ -97,5 +148,5 @@ try {
 } finally {
   await client.close();
   await service.close();
-  fs.rmSync(root, { recursive: true, force: true });
+  await removeTestDirectory(root, os.tmpdir());
 }

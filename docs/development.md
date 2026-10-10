@@ -12,6 +12,7 @@ npm.cmd run dev
 ```powershell
 npm.cmd run check
 npm.cmd run test:mcp
+npm.cmd run test:panel
 npm.cmd run test:codex-host
 npm.cmd run test:ui
 npm.cmd run test:capture
@@ -35,9 +36,15 @@ npm.cmd run test:packaged-paperdesk -- --paperdesk-exe <已安装的纸间EXE> -
 
 工作台设置里点击“准备本地插件”，按显示的两条命令添加本地市场与插件；开发环境可用 `npm.cmd run plugin:setup`。插件构建产物和运行配置分开，插件包中没有个人笔记或密钥。
 
-在 Codex 新对话启用“知识工作台”，说“打开知识工作台”。插件核对或启动本机服务，主机在对话右侧打开其页面。页面与独立桌面窗口共用编辑器、笔记和四种皮肤。不是把笔记复制为 ChatGPT 文档。当前对话的工具列表可能缓存，安装后需要在新对话启用。
+插件 `0.1.0-alpha.3` 注册了全局菜单和对话中的“打开知识工作台”入口。菜单打开原生 MCP Apps 面板；也可以在 Codex 新对话启用“知识工作台”，说“打开知识工作台”。面板复用桌面编辑器、笔记和四种皮肤，支持编辑、图片、收集箱及草稿审核。仅不支持原生面板的宿主才使用本机网页回退。旧对话可能缓存旧工具，安装后需要在新对话启用。
 
-在收集箱选择材料、排序和参考笔记，选择 Codex 后复制整理指令。模型可读取这批文字和原图，提交待审草稿。软件内 API 方式在设置中填写服务地址、密钥、支持图像输入的模型和协议；密钥用系统加密保存，连接测试只发送固定短句。
+原生插件可以单独更新，兼容已安装的桌面 `alpha.2` 服务，无需关闭用户正在编辑的窗口。构建后运行 `npm.cmd run plugin:install -- --installed-runtime`，沿用已有桌面运行时并保留 `launch.json`；不带该参数的开发安装使用本工作区。不要用旧桌面包里的“准备本地插件”覆盖已更新的插件市场。
+
+在收集箱选择材料、排序和参考笔记，选择 Codex 后，可在原生面板点击“交给当前 Codex 对话”，也可复制整理指令。只有点击发送才发起请求；发送结果不确定时先核对对话，不自动重试。模型可读取这批文字和原图，提交待审草稿。软件内 API 方式在桌面设置中填写服务地址、密钥、支持图像输入的模型和协议；密钥用系统加密保存，连接测试只发送固定短句。选库、切换库、系统截图与密钥配置仍在桌面完成。
+
+原生面板包含所有脚本、样式和字体，不嵌套本机网页、不直接访问网络，不携带本机鉴权令牌。两个 `workbench_panel_*` 工具仅供组件使用；笔记正文、图片、冲突详情放在 `_meta` 中，普通浏览不自动进入模型上下文。面板绑定打开时的知识库；换库后旧面板拒绝继续读写。保存和审核沿用本机版本校验；不提供模型可调用的正式接受工具。
+
+`test:panel` 使用系统临时合成库、真实 MCP stdio 和浏览器中的宿主协议测试页面，覆盖编辑重开、原图、公式、主题、用户发送、审核接受和冲突保护。默认用 Playwright Chromium，Windows 可设 `$env:KWB_TEST_BROWSER='msedge'`。它不等同于 Codex 桌面菜单实际点击验收。`test:codex-host` 另核对真实 app-server 获取到的原生资源和菜单元数据。实现依据：[官方 UI 文档](https://developers.openai.com/plugins/build/chatgpt-ui)、[工具可见性与资源元数据](https://developers.openai.com/plugins/reference)；Codex 菜单 `openai/ui.entrypoints` 沿用本机纸间已经使用的扩展字段。
 
 ## 验收边界
 

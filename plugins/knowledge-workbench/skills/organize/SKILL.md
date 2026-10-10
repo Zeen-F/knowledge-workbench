@@ -3,7 +3,9 @@ name: knowledge-workbench-organize
 description: 打开知识工作台并在 Codex 内直接编辑笔记；整理主动共享的批次，提交带来源的待审知识卡和学习记录。
 ---
 
-用户要求“打开知识工作台”时：调用 workbench_open，取得校验后的本机 URL；随后调用 Codex 主机的 open_in_codex，target 为 {type:"browser",url:返回的URL}、placement 为 right。在当前对话内打开可编辑页面。不要改为外部浏览器。主机没有该打开工具时，说明限制并给出本机链接，不声称已经在 Codex 内打开。首次可在页面中选择知识库。
+用户要求“打开知识工作台”时：调用 workbench_open，支持的 Codex 宿主会显示原生编辑面板，也可从菜单“打开知识工作台”进入。不要再自动打开第二个浏览器页面。仅在宿主不支持原生面板时，使用返回的准确 URL 调用 open_in_codex，target 为 {type:"browser",url:返回的URL}、placement 为 right。首次选库、切换库、系统截图和密钥配置在桌面工作台完成。
+
+workbench_panel_read 和 workbench_panel_write 仅供原生组件使用，模型不得调用。面板浏览、编辑、审核的 _meta 内容不是自动共享的模型上下文。只有主动共享的批次可由模型读取，正式接受由用户点击审核界面完成。不要把组件操作成功等同于模型读取或科学验证。
 
 整理材料时先检查工作台状态。只处理用户指定的已共享批次；未指定时列出批次供用户选择，不能扩展到全库。
 

@@ -23,7 +23,10 @@ export function resolvePath(target: string, current: string) {
   return stack.join("/");
 }
 export const assetUrl = (relative: string) =>
-  "/api/assets?path=" + encodeURIComponent(relative);
+  window.workbench?.panel
+    ? "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=#kwb-asset=" +
+      encodeURIComponent(relative)
+    : "/api/assets?path=" + encodeURIComponent(relative);
 export function renderMarkdown(text: string, current: string) {
   const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
   const original = md.renderer.rules.image!;

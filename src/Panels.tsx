@@ -128,10 +128,32 @@ export function Inbox({
     [thought, setThought] = useState(""),
     [title, setTitle] = useState(""),
     [batch, setBatch] = useState(false),
-    [executor, setExecutor] = useState<"api" | "codex">("api"),
+    [executor, setExecutor] = useState<"api" | "codex">(
+      window.workbench?.panel ? "codex" : "api",
+    ),
     [instruction, setInstruction] = useState(""),
     [references, setReferences] = useState<string[]>([]),
     [busy, setBusy] = useState(false);
+  const [deliveries, setDeliveries] = useState<Record<string, string>>({});
+  const sending = useRef(new Set<string>());
+  const batchPrompt = (id: string) =>
+    `请使用知识工作台插件处理共享批次 ${id}。读取指定批次和其中图片，保持材料顺序；整理为主题知识卡与学习记录，保留来源、适用条件、原始想法和待核对项。通过提交草稿工具返回结果，正式笔记由我在软件中审核。`;
+  async function sendBatch(id: string) {
+    if (sending.current.has(id) || !window.workbench?.sendToCodex) return;
+    sending.current.add(id);
+    setDeliveries((s) => ({ ...s, [id]: "发送中…" }));
+    try {
+      await window.workbench.sendToCodex(batchPrompt(id));
+      setDeliveries((s) => ({ ...s, [id]: "已发送" }));
+      notify("整理请求已发送到当前对话，结果将返回待审稿");
+    } catch (e) {
+      setDeliveries((s) => ({ ...s, [id]: "请核对对话" }));
+      notify(
+        (e as Error).message + " 请先核对对话是否收到；未收到时可复制指令。",
+        true,
+      );
+    }
+  }
   const fileInput = useRef<HTMLInputElement>(null);
   const importFiles = async (files: File[]) => {
     setBusy(true);
@@ -386,16 +408,29 @@ export function Inbox({
                   {j.error && <p className="error-text">{j.error}</p>}
                 </div>
                 <div className="job-actions">
+                  {window.workbench?.sendToCodex &&
+                    j.executor === "codex" &&
+                    ["shared", "review"].includes(j.state) && (
+                      <button
+                        className="text-button"
+                        disabled={Boolean(deliveries[j.id])}
+                        onClick={() => void sendBatch(j.id)}
+                      >
+                        <Sparkles size={15} />
+                        {deliveries[j.id] || "交给当前 Codex 对话"}
+                      </button>
+                    )}
                   {j.executor === "codex" &&
                     ["shared", "review"].includes(j.state) && (
                       <button
                         className="text-button"
                         onClick={() =>
                           void navigator.clipboard
-                            .writeText(
-                              `请使用知识工作台插件处理共享批次 ${j.id}。读取指定批次和其中图片，保持材料顺序；整理为主题知识卡与学习记录，保留来源、适用条件、原始想法和待核对项。通过提交草稿工具返回结果，正式笔记由我在软件中审核。`,
-                            )
+                            .writeText(batchPrompt(j.id))
                             .then(() => notify("Codex 指令已复制"))
+                            .catch((e) =>
+                              notify("复制失败：" + e.message, true),
+                            )
                         }
                       >
                         <Clipboard size={15} />
@@ -880,84 +915,96 @@ export function Settings({
         </div>
         <p className="muted">偏好保存在本机，重新打开后沿用。</p>
       </section>
-      <section className="settings-section">
-        <div className="section-label">
-          <Settings2 size={15} />
-          模型接口
-        </div>
-        <p className="muted">
-          仅在你开始整理时发送选定材料。测试连接只发送一条固定短句。
-        </p>
-        <label>
-          服务地址
-          <input
-            value={baseUrl}
-            onChange={(e) => {
-              setBaseUrl(e.target.value);
-              setResult("");
-            }}
-          />
-        </label>
-        <div className="form-row">
+      {window.workbench?.panel ? (
+        <section className="settings-section">
+          <div className="section-label">模型接口</div>
+          <p className="muted">
+            模型和密钥请在桌面工作台设置。此面板沿用已保存的配置；使用 Codex
+            整理无需填写 API 密钥。
+          </p>
+        </section>
+      ) : (
+        <section className="settings-section">
+          <div className="section-label">
+            <Settings2 size={15} />
+            模型接口
+          </div>
+          <p className="muted">
+            仅在你开始整理时发送选定材料。测试连接只发送一条固定短句。
+          </p>
           <label>
-            协议
-            <select
-              value={protocol}
-              onChange={(e) => setProtocol(e.target.value)}
-            >
-              <option value="responses">Responses</option>
-              <option value="chat-completions">Chat Completions</option>
-            </select>
-          </label>
-          <label>
-            模型名称
+            服务地址
             <input
-              value={model}
-              placeholder="支持图像输入的模型"
+              value={baseUrl}
               onChange={(e) => {
-                setModel(e.target.value);
+                setBaseUrl(e.target.value);
                 setResult("");
               }}
             />
           </label>
-        </div>
-        <label>
-          API 密钥
-          <input
-            type="password"
-            autoComplete="off"
-            value={key}
-            placeholder={
-              hasKey ? "已保存；留空沿用现有密钥" : "输入密钥，仅在本机加密保存"
-            }
-            onChange={(e) => {
-              setKey(e.target.value);
-              setResult("");
-            }}
-          />
-        </label>
-        <div className="button-row">
-          <button
-            className="secondary"
-            disabled={busy || !model}
-            onClick={() => void providerAction(true)}
-          >
-            测试连接
-          </button>
-          <button
-            className="primary"
-            disabled={busy || !model}
-            onClick={() => void providerAction(false)}
-          >
-            保存配置
-          </button>
-        </div>
-        {result && (
-          <p role="status" className="settings-result">
-            {result}
-          </p>
-        )}
-      </section>
+          <div className="form-row">
+            <label>
+              协议
+              <select
+                value={protocol}
+                onChange={(e) => setProtocol(e.target.value)}
+              >
+                <option value="responses">Responses</option>
+                <option value="chat-completions">Chat Completions</option>
+              </select>
+            </label>
+            <label>
+              模型名称
+              <input
+                value={model}
+                placeholder="支持图像输入的模型"
+                onChange={(e) => {
+                  setModel(e.target.value);
+                  setResult("");
+                }}
+              />
+            </label>
+          </div>
+          <label>
+            API 密钥
+            <input
+              type="password"
+              autoComplete="off"
+              value={key}
+              placeholder={
+                hasKey
+                  ? "已保存；留空沿用现有密钥"
+                  : "输入密钥，仅在本机加密保存"
+              }
+              onChange={(e) => {
+                setKey(e.target.value);
+                setResult("");
+              }}
+            />
+          </label>
+          <div className="button-row">
+            <button
+              className="secondary"
+              disabled={busy || !model}
+              onClick={() => void providerAction(true)}
+            >
+              测试连接
+            </button>
+            <button
+              className="primary"
+              disabled={busy || !model}
+              onClick={() => void providerAction(false)}
+            >
+              保存配置
+            </button>
+          </div>
+          {result && (
+            <p role="status" className="settings-result">
+              {result}
+            </p>
+          )}
+        </section>
+      )}
       <section className="settings-section">
         <div className="section-label">纸间 Paperdesk</div>
         <label>
@@ -987,25 +1034,31 @@ export function Settings({
           先在收集箱建立共享批次，再在 Codex
           对话中要求整理。插件只读取你共享的材料，返回待审草稿。
         </p>
-        <button
-          className="secondary"
-          onClick={() => {
-            if (window.workbench)
-              void window.workbench
-                .invoke("DESKTOP", "/plugin/setup")
-                .then((r) => {
-                  setPlugin(r.message);
-                  notify("本地插件配置已生成");
-                })
-                .catch((e) => notify(e.message, true));
-            else
-              void nativeAction("plugin")
-                .then((r) => setPlugin(r.message))
-                .catch((e) => notify(e.message, true));
-          }}
-        >
-          准备本地插件
-        </button>
+        {window.workbench?.panel ? (
+          <p role="status">
+            Codex 原生面板已连接。可直接编辑、收集材料和审核草稿。
+          </p>
+        ) : (
+          <button
+            className="secondary"
+            onClick={() => {
+              if (window.workbench)
+                void window.workbench
+                  .invoke("DESKTOP", "/plugin/setup")
+                  .then((r) => {
+                    setPlugin(r.message);
+                    notify("本地插件配置已生成");
+                  })
+                  .catch((e) => notify(e.message, true));
+              else
+                void nativeAction("plugin")
+                  .then((r) => setPlugin(r.message))
+                  .catch((e) => notify(e.message, true));
+            }}
+          >
+            准备本地插件
+          </button>
+        )}
         {plugin && <pre className="plugin-instructions">{plugin}</pre>}
       </section>
       <footer className="modal-footer">
