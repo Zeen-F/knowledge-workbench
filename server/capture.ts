@@ -42,13 +42,32 @@ export class Captures {
     text = "",
     image,
     ref: supplied,
+    requestId,
   }: {
     title: string;
     text?: string;
     image?: string;
     ref?: Partial<SourceRef>;
+    requestId?: string;
   }) {
-    const id = supplied?.id || randomUUID();
+    const id = requestId || supplied?.id || randomUUID();
+    const requestHash = digest(JSON.stringify({ title, text, image }));
+    const requestFile = path.join(
+      this.vault.dataDir,
+      "capture-requests",
+      id + ".json",
+    );
+    let capturedAt = now();
+    if (requestId && fs.existsSync(requestFile)) {
+      const receipt = JSON.parse(readUtf8(requestFile));
+      if (receipt.hash !== requestHash)
+        throw new AppError("想法保存标识已用于其他内容", 409);
+      capturedAt = receipt.capturedAt;
+    } else if (requestId)
+      atomicWrite(
+        requestFile,
+        JSON.stringify({ hash: requestHash, capturedAt }),
+      );
     if (supplied?.transferId) {
       const existing = this.vault.db
         .prepare("SELECT * FROM sources WHERE transfer_id=?")
@@ -60,12 +79,19 @@ export class Captures {
       schema: "source-ref/v1",
       id,
       kind: image ? "image" : "text",
-      capturedAt: now(),
+      capturedAt,
       title,
       ...supplied,
       ...asset,
     });
     const relative = `${MANAGED}/Inbox/${ref.capturedAt.slice(0, 10)}--${slug(title)}--${id.slice(0, 8)}.md`;
+    if (requestId && fs.existsSync(this.vault.absolute(relative))) {
+      const existing = this.vault.read(relative);
+      if (existing.metadata.kb_capture_request !== requestHash)
+        throw new AppError("已有材料与保存请求不同，请核对", 409);
+      this.vault.index(relative);
+      return this.get(id);
+    }
     const body = `# ${title}\n\n${ref.assetPath ? `![[${ref.assetPath}]]\n\n` : ""}${ref.paperdesk ? `## 来源\n\n${ref.paperdesk.title} · PDF 第 ${ref.paperdesk.page} 页\n\n${ref.paperdesk.quote ? "> " + ref.paperdesk.quote.replaceAll("\n", "\n> ") + "\n\n" : ""}` : ""}## 我当时的想法\n\n${text}\n`;
     atomicWrite(
       this.vault.absolute(relative),
@@ -79,6 +105,7 @@ export class Captures {
           tags: [],
           kb_id: id,
           kb_source: ref,
+          ...(requestId ? { kb_capture_request: requestHash } : {}),
         },
         body,
       ),

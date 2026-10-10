@@ -50,3 +50,7 @@ npm.cmd run test:packaged-paperdesk -- --paperdesk-exe <已安装的纸间EXE> -
 仓库保留可分发的插件模板。安装时生成的本机插件采用 Codex 兼容插件结构，把绝对运行时路径写入 `.mcp.json`，以适配带空格和中文的 Windows 安装位置。已打包应用使用自带 Electron 的 Node 运行时，使用者无需另外安装 Node.js。`workbench_open` 的唤起配置只接受安装时记录的路径。
 
 版本控制不包含真实笔记、截图、密钥、本机队列或安装包。GitHub 的 Windows checks 检查源码与桌面基本流程，并在临时 CI 工作目录读取固定 Paperdesk 提交进行双应用联调；手动 Windows package 工作流提供安装包构建产物。日常开发仍各保留一份源码，不为联调复制第二套本机工作区。纸间导出功能由 PR #21 单独合并，不改写 beta.2 发布产物。完整命令与证据范围见 [联动协议](paperdesk-protocol.md)。
+
+## 本轮一致性回归
+
+来源解析、批量恢复、Markdown 审核状态和本机草稿的权威关系见 [数据一致性与恢复约定](data-consistency.md)。`npm.cmd run check` 现在包含 lint、typecheck、test 和 build；新增 `npm.cmd run test:reliability-ui` 验证浏览器输入恢复与响应竞态，`npm.cmd run demo -- --smoke` 验证独立合成演示与退出清理。

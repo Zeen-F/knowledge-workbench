@@ -24,6 +24,8 @@ import { Captures } from "./capture.ts";
 import { Processing } from "./processing.ts";
 import { Paperdesk } from "./paperdesk.ts";
 import { callProvider, validateProvider } from "./provider.ts";
+import { paperdeskBody } from "./markdown.ts";
+import { relatedNotes } from "./relations.ts";
 
 export type ServiceOptions = {
   vaultDir?: string;
@@ -32,6 +34,7 @@ export type ServiceOptions = {
   port?: number;
   token?: string;
   dev?: boolean;
+  secureStorage?: boolean;
   encrypt?: (value: string) => Promise<string>;
   decrypt?: (value: string) => Promise<string>;
   desktop?: (action: string) => Promise<any>;
@@ -117,7 +120,9 @@ export async function startService(options: ServiceOptions) {
       .find((s) => s.startsWith("kwb_session="))
       ?.slice(12);
     if (!authorized(bearer) && !authorized(cookie))
-      return res.status(401).json({ error: "应用连接已失效，请重新打开" });
+      return res
+        .status(401)
+        .json({ error: "应用连接已失效，请重新打开", code: "SESSION_EXPIRED" });
     res.setHeader("Cache-Control", "no-store");
     next();
   });
@@ -127,6 +132,14 @@ export async function startService(options: ServiceOptions) {
       service: PRODUCT,
       apiVersion: API_VERSION,
       desktop: Boolean(options.desktop),
+      capabilities: {
+        capture: Boolean(options.desktop),
+        chooseVault: Boolean(options.desktop),
+        plugin: Boolean(options.desktop),
+        secureCredentials:
+          options.secureStorage !== false &&
+          Boolean(options.encrypt && options.decrypt),
+      },
       theme: JSON.parse(
         String(
           (
@@ -245,19 +258,7 @@ export async function startService(options: ServiceOptions) {
   });
   app.get("/api/relations", (req, res) => {
     const p = route.parse(req.query).path;
-    const note = vault!.read(p);
-    res.json({
-      outgoing: db!.prepare("SELECT * FROM relations WHERE from_path=?").all(p),
-      incoming: db!
-        .prepare("SELECT * FROM relations WHERE to_ref IN (?,?,?)")
-        .all(p, p.replace(/\.md$/, ""), path.posix.basename(p, ".md")),
-      related: note.tags.length
-        ? vault!
-            .search(note.tags[0])
-            .filter((n) => n.path !== p)
-            .slice(0, 8)
-        : [],
-    });
+    res.json(relatedNotes(vault!, p));
   });
   app.post("/api/assets", (req, res) => {
     const b = z
@@ -278,6 +279,7 @@ export async function startService(options: ServiceOptions) {
       .object({
         title: z.string().min(1).max(200),
         text: z.string().max(500000).default(""),
+        requestId: z.string().uuid().optional(),
         image: z
           .string()
           .max(28 * 1024 * 1024)
@@ -371,7 +373,7 @@ export async function startService(options: ServiceOptions) {
   });
   app.put("/api/settings/provider", async (req, res) => {
     const config = validateProvider(providerSchema.parse(req.body));
-    if (!options.encrypt)
+    if (!options.encrypt || options.secureStorage === false)
       throw new AppError("请在桌面应用中保存密钥；浏览器开发入口不保存凭据");
     const previous = db!
       .prepare("SELECT value FROM settings WHERE key='provider'")
@@ -554,7 +556,5 @@ export async function startService(options: ServiceOptions) {
   };
 }
 function parseHistoryBody(content: string) {
-  return content
-    .replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---\r?\n/, "")
-    .split("\n\n<!-- paperdesk-generated:start:v1 -->")[0];
+  return paperdeskBody(content);
 }

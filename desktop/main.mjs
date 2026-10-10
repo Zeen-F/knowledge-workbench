@@ -191,6 +191,7 @@ async function start(vaultDir) {
         port: preferredPort,
         dataDir: profileDir,
         distDir: path.join(root, "dist"),
+        secureStorage: safeStorage.isEncryptionAvailable(),
       },
     });
   });

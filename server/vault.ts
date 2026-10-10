@@ -24,6 +24,7 @@ import {
   links,
   noteTitle,
   parseMarkdown,
+  paperdeskBody,
   rewriteLinks,
 } from "./markdown.ts";
 
@@ -73,7 +74,7 @@ export class Vault {
       throw new AppError("仅能编辑 Markdown 笔记");
     const file = this.absolute(relative),
       content = readUtf8(file),
-      { metadata, body } = parseMarkdown(content);
+      { metadata, body } = parseMarkdown(content, false);
     const managed =
       content.includes("<!-- paperdesk-generated:") ||
       content.includes("<!-- paperdesk-library:");
@@ -98,9 +99,7 @@ export class Vault {
       content,
       metadata,
       paperdeskId,
-      body: managed
-        ? body.split("\n\n<!-- paperdesk-generated:start:v1 -->")[0]
-        : body,
+      body: managed ? paperdeskBody(content) : body,
     };
     const recovery = this.draftFile(relative);
     if (fs.existsSync(recovery)) {
@@ -391,6 +390,8 @@ export class Vault {
         "VERSION_CONFLICT",
         { currentHash: before.hash },
       );
+    // Validation must precede every replacement; keepDraft above preserves unfinished YAML.
+    parseMarkdown(content);
     if (before.content !== content) {
       this.backup(relative, before.content, "save");
       if (digest(readUtf8(this.absolute(relative))) !== expected)

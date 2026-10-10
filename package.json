@@ -9,11 +9,15 @@
     "node": ">=24"
   },
   "scripts": {
+    "lint": "prettier --check server shared src tests scripts/test-reliability-ui.mjs scripts/demo.mjs",
+    "typecheck": "tsc --noEmit",
+    "demo": "node --import tsx scripts/demo.mjs",
+    "test:reliability-ui": "node --import tsx scripts/test-reliability-ui.mjs",
     "dev": "node --import tsx scripts/dev.mjs",
     "build": "tsc --noEmit && vite build && node scripts/build.mjs",
     "start": "electron .",
     "test": "node --import tsx --test tests/*.test.ts",
-    "check": "npm run test && npm run build",
+    "check": "npm run lint && npm run typecheck && npm run test && npm run build",
     "test:ui": "node scripts/test-ui.mjs",
     "desktop:pack": "npm run build && electron-builder --win --x64 --dir --publish never",
     "desktop:dist": "npm run build && electron-builder --win --x64 --publish never",
