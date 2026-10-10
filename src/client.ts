@@ -44,6 +44,24 @@ export function openExternal(url: string): void {
   if (window.workbench) void window.workbench.openExternal(url);
   else window.open(url, "_blank", "noopener,noreferrer");
 }
+// Reserve the new tab during the click; asynchronous validation otherwise loses user activation.
+export async function openResolvedExternal(resolveUrl: () => Promise<string>) {
+  if (window.workbench)
+    return window.workbench.openExternal(await resolveUrl());
+  const tab = window.open("about:blank", "_blank");
+  if (!tab) throw new Error("浏览器未允许打开来源页，请允许弹出窗口后重试");
+  tab.opener = null;
+  tab.document.title = "正在核对纸间来源";
+  tab.document.body.textContent = "正在核对文献和页码…";
+  try {
+    const url = await resolveUrl();
+    if (!/^https?:\/\//i.test(url)) throw new Error("来源地址无效");
+    tab.location.replace(url);
+  } catch (e) {
+    tab.close();
+    throw e;
+  }
+}
 export const shortDate = (value: string) =>
   new Intl.DateTimeFormat("zh-CN", {
     month: "2-digit",

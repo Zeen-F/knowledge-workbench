@@ -149,10 +149,15 @@ export class Captures {
         const manifestPath = this.vault.absolute(
           `${base}/${entry.name}/manifest.json`,
         );
-        if (!fs.existsSync(manifestPath)) continue;
+        if (!fs.existsSync(manifestPath)) {
+          pending.push(entry.name);
+          continue;
+        }
         const manifest = transferSchema.parse(
           JSON.parse(readUtf8(manifestPath)),
         );
+        if (manifest.id !== entry.name)
+          throw new Error("交换包标识与目录不一致");
         if (
           this.vault.db
             .prepare("SELECT id FROM sources WHERE transfer_id=?")

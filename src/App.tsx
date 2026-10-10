@@ -37,7 +37,14 @@ import type {
   NoteSummary,
   Proposal,
 } from "../shared/contracts";
-import { api, fileData, openExternal, shortDate, nativeAction } from "./client";
+import {
+  api,
+  fileData,
+  openExternal,
+  openResolvedExternal,
+  shortDate,
+  nativeAction,
+} from "./client";
 import { Editor, type EditorHandle } from "./Editor";
 import { Diff, Inbox, Modal, Review, Settings } from "./Panels";
 
@@ -590,8 +597,16 @@ export default function App() {
             aria-label="刷新知识库"
             onClick={() =>
               void api("POST", "/refresh")
-                .then(refresh)
-                .then(() => notify("已重新读取知识库"))
+                .then(async (result) => {
+                  await refresh();
+                  const pending = result.imports?.pending?.length || 0;
+                  notify(
+                    pending
+                      ? `已重新读取知识库；${pending} 份纸间材料等待清单或原图完整同步`
+                      : "已重新读取知识库",
+                    pending > 0,
+                  );
+                })
                 .catch((e) => notify(e.message, true))
             }
           >
@@ -1018,19 +1033,25 @@ export default function App() {
                     {Boolean(t.note.metadata.kb_source) && (
                       <section>
                         <h3>材料来源</h3>
-                        <p>{String((t.note.metadata.kb_source as any).kind)}</p>
+                        <p>
+                          {(t.note.metadata.kb_source as any).paperdesk
+                            ? `${(t.note.metadata.kb_source as any).paperdesk.title} · PDF 第 ${(t.note.metadata.kb_source as any).paperdesk.page} 页`
+                            : String((t.note.metadata.kb_source as any).kind)}
+                        </p>
                         {(t.note.metadata.kb_source as any).paperdesk && (
                           <button
                             className="secondary"
                             onClick={() => {
-                              const ref = (t.note.metadata.kb_source as any)
-                                .paperdesk;
-                              void api(
-                                "GET",
-                                `/paperdesk/source?documentId=${ref.documentId}&page=${ref.page}`,
-                              )
-                                .then((r) => openExternal(r.url))
-                                .catch((e) => notify(e.message, true));
+                              const source = t.note.metadata.kb_source as any;
+                              void openResolvedExternal(
+                                async () =>
+                                  (
+                                    await api(
+                                      "GET",
+                                      `/paperdesk/source?sourceId=${encodeURIComponent(source.id)}`,
+                                    )
+                                  ).url,
+                              ).catch((e) => notify(e.message, true));
                             }}
                           >
                             回到纸间原页

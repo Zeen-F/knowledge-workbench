@@ -279,6 +279,16 @@ test("partial and corrupt Paperdesk transfers wait, complete package imports onl
   captures.importPaperdesk();
   assert.equal(captures.list().length, 1);
   assert.equal(captures.list()[0].ref.paperdesk?.page, 3);
+  const mismatched = randomUUID();
+  const other = vault.absolute(`Paperdesk/Exports/${mismatched}/manifest.json`);
+  atomicWrite(other, JSON.stringify(manifest));
+  assert.deepEqual(captures.importPaperdesk().pending, [mismatched]);
+  atomicWrite(
+    other,
+    JSON.stringify({ ...manifest, id: mismatched, createdAt: "not-a-date" }),
+  );
+  assert.deepEqual(captures.importPaperdesk().pending, [mismatched]);
+  assert.equal(captures.list().length, 1);
 });
 test("batch is immutable; proposal scope and stale edits are rejected; acceptance idempotent", async (t) => {
   const { vault, captures, processing } = fixture(t);

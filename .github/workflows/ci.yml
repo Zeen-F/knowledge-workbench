@@ -23,6 +23,19 @@ jobs:
       - run: npm.cmd run check
       - run: npm.cmd run test:mcp
       - run: npm.cmd run test:ui
+      - uses: actions/checkout@v4
+        with:
+          repository: Zeen-F/PDF_Vibecoding
+          ref: 939b6ff3010e0145594573ee4673578bb375e7be
+          path: .local/paperdesk-integration
+          persist-credentials: false
+      - run: npm.cmd ci
+        working-directory: .local/paperdesk-integration
+      - run: npm.cmd run build
+        working-directory: .local/paperdesk-integration
+      - run: npx.cmd playwright install chromium
+        timeout-minutes: 5
+      - run: npm.cmd run test:paperdesk -- .local/paperdesk-integration
       - run: npm.cmd audit --omit=dev --audit-level=moderate
       - uses: actions/upload-artifact@v4
         if: always()

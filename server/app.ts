@@ -418,11 +418,12 @@ export async function startService(options: ServiceOptions) {
   app.get("/api/paperdesk/source", async (req, res) => {
     const b = z
       .object({
-        documentId: z.string().uuid(),
-        page: z.coerce.number().int().positive(),
+        sourceId: z.string().uuid(),
       })
       .parse(req.query);
-    res.json({ url: await paperdesk!.sourceUrl(b.documentId, b.page) });
+    res.json({
+      url: await paperdesk!.sourceUrl(captures!.snapshot(b.sourceId).ref),
+    });
   });
   app.get("/api/mcp/batches", (_req, res) =>
     res.json(
@@ -480,7 +481,7 @@ export async function startService(options: ServiceOptions) {
       // A user profile may contain a dot-prefixed directory. Constrain the
       // lookup to the public root so Express does not classify its ancestors
       // as hidden web files (e.g. ~/.knowledge-workbench/runtime).
-      res.sendFile("index.html", {root:options.distDir!});
+      res.sendFile("index.html", { root: options.distDir! });
     });
   }
   app.use(

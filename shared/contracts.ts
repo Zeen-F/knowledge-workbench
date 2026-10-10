@@ -146,7 +146,7 @@ export type Provider = z.infer<typeof providerSchema>;
 export const transferSchema = z.object({
   schema: z.literal("paperdesk-capture/v1"),
   id: z.string().uuid(),
-  createdAt: z.string(),
+  createdAt: z.iso.datetime(),
   source: paperdeskRefSchema,
   comment: z.string().max(20000).default(""),
   image: z

@@ -1,4 +1,6 @@
-import { AppError, atomicWrite, digest, now } from "./files.ts";
+import fs from "node:fs";
+import { AppError } from "./files.ts";
+import { relativePathSchema, type SourceRef } from "../shared/contracts.ts";
 import type { Vault } from "./vault.ts";
 
 export class Paperdesk {
@@ -8,6 +10,39 @@ export class Paperdesk {
       .prepare("SELECT value FROM settings WHERE key='paperdesk'")
       .get() as any;
     return r ? JSON.parse(r.value) : null;
+  }
+  samePath(left: string, right: string) {
+    const normalize = (value: string) => {
+      const real = fs.realpathSync.native(value);
+      return process.platform === "win32" ? real.toLowerCase() : real;
+    };
+    return normalize(left) === normalize(right);
+  }
+  async storage(base: string) {
+    const storage = await this.request(
+      base,
+      "/api/integrations/knowledge/status",
+    ).catch((e) => {
+      if (e instanceof AppError && e.status === 404)
+        throw new AppError(
+          "此纸间版本尚未提供知识库联动，请更新并重新启动纸间",
+          409,
+        );
+      throw e;
+    });
+    if (
+      storage.schema !== "paperdesk-knowledge/v1" ||
+      typeof storage.vaultPath !== "string"
+    )
+      throw new AppError("请更新纸间以启用知识工作台联动", 409);
+    if (!this.samePath(storage.vaultPath, this.vault.root))
+      throw new AppError(
+        "纸间与工作台连接了不同的知识库，请选择同一个库",
+        409,
+        "PAPERDESK_VAULT_MISMATCH",
+      );
+    relativePathSchema.parse(storage.subdir);
+    return storage;
   }
   async bind(baseUrl: string) {
     const url = new URL(baseUrl);
@@ -24,9 +59,7 @@ export class Paperdesk {
     const status = await this.request(url.origin, "/api/plugin/status");
     if (status.service !== "paperdesk" || status.apiVersion !== 1)
       throw new AppError("地址上的服务不是兼容的纸间");
-    const storage = await this.request(url.origin, "/api/storage");
-    if (storage.mode !== "vault")
-      throw new AppError("纸间需要连接同一个 Obsidian 库");
+    const storage = await this.storage(url.origin);
     const profile = {
       baseUrl: url.origin,
       libraryId: status.libraryId,
@@ -74,6 +107,9 @@ export class Paperdesk {
       s.libraryId !== p.libraryId
     )
       throw new AppError("纸间资料库与绑定记录不一致", 409);
+    const storage = await this.storage(p.baseUrl);
+    if (storage.subdir !== p.subdir)
+      throw new AppError("纸间资料目录已变化，请重新连接", 409);
     return p;
   }
   async save(relative: string, content: string, expected: string) {
@@ -93,13 +129,7 @@ export class Paperdesk {
       `/api/documents/${note.paperdeskId}/vault-note`,
     );
     const actual = new URL(uri.uri).searchParams.get("path");
-    if (
-      !actual ||
-      digest(actual.replaceAll("\\", "/").toLowerCase()) !==
-        digest(
-          this.vault.absolute(relative).replaceAll("\\", "/").toLowerCase(),
-        )
-    )
+    if (!actual || !this.samePath(actual, this.vault.absolute(relative)))
       throw new AppError("纸间打开的是另一个知识库，已停止保存", 409);
     const result = await this.request(
       p.baseUrl,
@@ -127,8 +157,25 @@ export class Paperdesk {
     this.vault.clearDraft(relative, content);
     return saved;
   }
-  async sourceUrl(documentId: string, page: number) {
+  async sourceUrl(ref: SourceRef) {
+    const source = ref.paperdesk;
+    if (!source) throw new AppError("这份材料没有纸间来源");
     const p = await this.verify();
-    return `${p.baseUrl}/?document=${encodeURIComponent(documentId)}&page=${page}`;
+    const current = await this.request(
+      p.baseUrl,
+      `/api/integrations/knowledge/source/${encodeURIComponent(source.documentId)}`,
+    );
+    if (
+      current.documentId !== source.documentId ||
+      current.pdfSha256 !== source.pdfSha256 ||
+      !Number.isSafeInteger(current.pageCount) ||
+      source.page > current.pageCount
+    )
+      throw new AppError(
+        "原 PDF 身份或页码已变化，请核对保存的材料",
+        409,
+        "SOURCE_CHANGED",
+      );
+    return `${p.baseUrl}/?document=${encodeURIComponent(source.documentId)}&page=${source.page}`;
   }
 }
