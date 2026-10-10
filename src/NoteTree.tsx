@@ -4,11 +4,13 @@ import type { NoteSummary } from "../shared/contracts";
 type Branch = { notes: NoteSummary[]; children: Map<string, Branch> };
 export function NoteTree({
   notes,
+  basePath = "",
   active,
   dirty,
   onOpen,
 }: {
   notes: NoteSummary[];
+  basePath?: string;
   active: string;
   dirty: (path: string) => boolean;
   onOpen: (path: string) => void;
@@ -16,7 +18,11 @@ export function NoteTree({
   const root: Branch = { notes: [], children: new Map() };
   for (const note of notes) {
     let branch = root;
-    for (const folder of note.path.split("/").slice(0, -1)) {
+    const relative =
+      basePath && note.path.startsWith(basePath + "/")
+        ? note.path.slice(basePath.length + 1)
+        : note.path;
+    for (const folder of relative.split("/").slice(0, -1)) {
       if (!branch.children.has(folder))
         branch.children.set(folder, { notes: [], children: new Map() });
       branch = branch.children.get(folder)!;
@@ -45,7 +51,13 @@ export function NoteTree({
           <details key={prefix + name} open className="note-folder">
             <summary>
               <Folder size={14} />
-              <span>{name}</span>
+              <span>
+                {basePath && !prefix
+                  ? { Cards: "知识卡", Journal: "学习记录", Assets: "附件" }[
+                      name
+                    ] || name
+                  : name}
+              </span>
             </summary>
             <div>{render(child, prefix + name + "/")}</div>
           </details>

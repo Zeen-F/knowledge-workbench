@@ -308,23 +308,44 @@ export class Vault {
         .all() as Row[]
     ).map((r) => this.summary(r));
   }
-  search(query: string) {
+  search(query: string, scope: "workbench" | "vault" = "vault") {
     const q = query.trim().slice(0, 200);
-    if (!q) return this.list();
+    if (!q)
+      return this.list().filter(
+        (note) =>
+          scope === "vault" ||
+          (!note.missing &&
+            note.path.startsWith(`${MANAGED}/`) &&
+            !note.path.includes("/Drafts/") &&
+            !note.path.includes("/Inbox/")),
+      );
+    // Apply the workspace boundary before ranking/limiting, so unrelated notes
+    // cannot crowd managed notes out of the first 100 search results.
+    const scopeFilter =
+      scope === "workbench"
+        ? " AND n.path GLOB ? AND n.path NOT GLOB ? AND n.path NOT GLOB ?"
+        : "";
+    const scopeArgs =
+      scope === "workbench" ? [`${MANAGED}/*`, "*/Drafts/*", "*/Inbox/*"] : [];
     let rows: Row[];
     if (Array.from(q).length >= 3)
       rows = this.db
         .prepare(
-          "SELECT n.* FROM notes_fts f JOIN notes n ON n.path=f.path WHERE notes_fts MATCH ? AND n.missing=0 ORDER BY bm25(notes_fts) LIMIT 100",
+          "SELECT n.* FROM notes_fts f JOIN notes n ON n.path=f.path WHERE notes_fts MATCH ? AND n.missing=0" +
+            scopeFilter +
+            " ORDER BY bm25(notes_fts) LIMIT 100",
         )
-        .all('"' + q.replaceAll('"', '""') + '"') as Row[];
+        .all('"' + q.replaceAll('"', '""') + '"', ...scopeArgs) as Row[];
     else
       rows = this.db
         .prepare(
-          "SELECT n.* FROM notes_fts f JOIN notes n ON n.path=f.path WHERE (f.title LIKE ? ESCAPE '\\' OR f.body LIKE ? ESCAPE '\\' OR f.tags LIKE ? ESCAPE '\\') AND n.missing=0 LIMIT 100",
+          "SELECT n.* FROM notes_fts f JOIN notes n ON n.path=f.path WHERE (f.title LIKE ? ESCAPE '\\' OR f.body LIKE ? ESCAPE '\\' OR f.tags LIKE ? ESCAPE '\\') AND n.missing=0" +
+            scopeFilter +
+            " LIMIT 100",
         )
         .all(
           ...Array(3).fill("%" + q.replace(/[\\%_]/g, "\\$&") + "%"),
+          ...scopeArgs,
         ) as Row[];
     return rows.map((r) => this.summary(r));
   }

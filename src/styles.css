@@ -170,6 +170,24 @@ h3 {
   font-size: 12px;
   margin-bottom: 16px;
 }
+.note-scope {
+  display: grid;
+  gap: 6px;
+  margin: -5px 0 17px;
+}
+.note-scope > span,
+.note-scope small {
+  color: var(--muted);
+  font-size: 10px;
+}
+.note-scope select {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font: inherit;
+  font-size: 12px;
+}
 .new-note kbd {
   margin-left: auto;
   color: #bdcabc;

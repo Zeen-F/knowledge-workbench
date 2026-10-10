@@ -225,6 +225,9 @@ try {
           );
         }),
     );
+  await expect(frame.getByLabel("笔记范围")).toHaveValue("workbench");
+  await expect(frame.locator(".note-list")).not.toContainText("从一个问题开始");
+  await frame.getByLabel("笔记范围").selectOption("vault");
   await frame
     .getByRole("button", { name: "从一个问题开始", exact: false })
     .first()
@@ -419,6 +422,7 @@ try {
     .toBe("accepted");
   await page.screenshot({ path: path.join(evidence, "review.png") });
   await load();
+  await frame.getByLabel("笔记范围").selectOption("vault");
   await frame
     .getByRole("button", { name: "从一个问题开始", exact: false })
     .first()
@@ -436,6 +440,7 @@ try {
       .includes("关闭面板前保存验证"),
   );
   await load();
+  await frame.getByLabel("笔记范围").selectOption("vault");
   await frame
     .getByRole("button", { name: "从一个问题开始", exact: false })
     .first()

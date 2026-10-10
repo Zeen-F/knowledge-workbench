@@ -12,6 +12,11 @@ const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "kwb-ui-")),
   vault = path.join(testRoot, "知识库 中文 vault"),
   profile = path.join(testRoot, "配置 中文 profile");
 seed(vault);
+fs.mkdirSync(path.join(vault, "KnowledgeWorkbench/Cards"), { recursive: true });
+fs.writeFileSync(
+  path.join(vault, "KnowledgeWorkbench/Cards/专属笔记.md"),
+  "---\nnote_type: concept\n---\n# 专属笔记\n\n只属于工作台的合成笔记。\n",
+);
 fs.mkdirSync("output/playwright", { recursive: true });
 const env = { ...process.env, KWB_VAULT: vault, KWB_PROFILE: profile };
 delete env.ELECTRON_RUN_AS_NODE;
@@ -39,6 +44,19 @@ try {
   });
   const page = await app.firstWindow();
   page.on("pageerror", (error) => errors.push(error.message));
+  checkpoint("workspace-scope");
+  await expect(page.getByLabel("笔记范围")).toHaveValue("workbench");
+  await expect(page.locator(".note-list")).toContainText("专属笔记");
+  await expect(page.locator(".note-list")).not.toContainText("从一个问题开始");
+  await expect(page.locator("nav")).toContainText("全部笔记1");
+  await expect(page.locator(".recent-notes")).not.toContainText(
+    "从一个问题开始",
+  );
+  await page.screenshot({ path: "output/playwright/workspace-home.png" });
+  await page.getByLabel("搜索知识库").fill("从一个问题开始");
+  await expect(page.locator(".note-list")).toContainText("没有找到匹配笔记");
+  await page.getByLabel("笔记范围").selectOption("vault");
+  await expect(page.locator(".note-list")).toContainText("从一个问题开始");
   checkpoint("editor-and-themes");
   await page
     .getByRole("button", { name: "从一个问题开始", exact: false })
@@ -297,6 +315,11 @@ try {
   app.context().setDefaultTimeout(15000);
   app.context().setDefaultNavigationTimeout(30000);
   const reopened = await app.firstWindow();
+  await expect(reopened.getByLabel("笔记范围")).toHaveValue("workbench");
+  await expect(reopened.locator(".note-list")).not.toContainText(
+    "从一个问题开始",
+  );
+  await reopened.getByLabel("笔记范围").selectOption("vault");
   await reopened
     .getByRole("button", { name: "从一个问题开始", exact: false })
     .first()
@@ -350,6 +373,10 @@ try {
         "partial-draft-acceptance",
         "restart",
         "desktop-plugin-runtime",
+        "workspace-default-and-counts",
+        "workspace-search-scope",
+        "whole-vault-switch",
+        "workspace-default-after-restart",
         ...(process.platform === "darwin"
           ? [
               "native-menu",
