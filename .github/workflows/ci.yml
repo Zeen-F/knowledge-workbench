@@ -1,0 +1,45 @@
+name: Windows checks
+on:
+  push:
+    branches: [main, "feat/**", "fix/**"]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm.cmd ci
+      - run: npm.cmd run check
+      - run: npm.cmd run test:mcp
+      - run: npm.cmd run test:ui
+      - uses: actions/checkout@v4
+        with:
+          repository: Zeen-F/PDF_Vibecoding
+          ref: 939b6ff3010e0145594573ee4673578bb375e7be
+          path: .local/paperdesk-integration
+          persist-credentials: false
+      - run: npm.cmd ci
+        working-directory: .local/paperdesk-integration
+      - run: npm.cmd run build
+        working-directory: .local/paperdesk-integration
+      - run: npx.cmd playwright install chromium
+        timeout-minutes: 5
+      - run: npm.cmd run test:paperdesk -- .local/paperdesk-integration
+      - run: npm.cmd audit --omit=dev --audit-level=moderate
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: interface-evidence
+          path: output/playwright/
+          retention-days: 7

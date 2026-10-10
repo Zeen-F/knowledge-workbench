@@ -1,0 +1,60 @@
+name: Windows preview package
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm.cmd ci
+      - run: npm.cmd run check
+      - run: npm.cmd run test:mcp
+      - run: npm.cmd run desktop:dist
+      - name: Install current package outside the checkout
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $installer = (Resolve-Path "release/KnowledgeWorkbench-$version-win-x64.exe").Path
+          $target = Join-Path $env:RUNNER_TEMP 'knowledge-workbench-app'
+          $process = Start-Process -FilePath $installer -ArgumentList @('/S', '/currentuser', "/D=$target") -WindowStyle Hidden -PassThru -Wait
+          if ($process.ExitCode -ne 0) { throw "Installer exited $($process.ExitCode)" }
+          "KWB_TEST_EXE=$target/Knowledge Workbench.exe" | Add-Content $env:GITHUB_ENV
+          "KWB_TEST_INSTALLER=$installer" | Add-Content $env:GITHUB_ENV
+      - name: Test packaged app
+        shell: pwsh
+        run: |
+          npm.cmd run test:ui
+      - name: Keep an active editor intact during an attempted update
+        shell: pwsh
+        run: node scripts/test-installer.mjs "$env:KWB_TEST_EXE" "$env:KWB_TEST_INSTALLER"
+      - uses: actions/checkout@v4
+        with:
+          repository: Zeen-F/PDF_Vibecoding
+          ref: e0b014d17dbb0e4330a0ca72c7e7943dab2f7e5a
+          path: .local/paperdesk-package
+          persist-credentials: false
+      - run: npm.cmd ci
+        working-directory: .local/paperdesk-package
+      - run: npm.cmd run desktop:pack:win
+        working-directory: .local/paperdesk-package
+      - run: npx.cmd playwright install chromium
+      - name: Test two packaged products
+        shell: pwsh
+        run: |
+          $paperdesk = (Resolve-Path '.local/paperdesk-package/release/win-unpacked/Paperdesk.exe').Path
+          npm.cmd run test:packaged-paperdesk -- --paperdesk-exe "$paperdesk" --workbench-exe "$env:KWB_TEST_EXE" --paperdesk-source .local/paperdesk-package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64-preview
+          path: |
+            release/*.exe
+            release/*.blockmap
+            output/playwright/packaged-paperdesk/
+          retention-days: 14

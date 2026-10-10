@@ -6,6 +6,10 @@ Markdown 与附件保存在用户选择的 Obsidian 仓库。纸间负责 PDF �
 
 开发状态与验证边界见 [实施记录](docs/implementation.md)。此版本处于早期预览。
 
+已具备 Markdown 即时渲染与源码编辑、公式、图片、笔记树和标签页、版本冲突与历史恢复、截图收集、双路 AI 草稿审核，以及森林、暖砂、雾蓝、夜读四套皮肤。
+
+Codex 插件可以唤起本机工作台，再在对话右侧打开同一个可编辑页面。安装和使用方式见 [开发与使用](docs/development.md)。
+
 ## 开发
 
 需要 Node.js 24+。在 PowerShell 中运行：

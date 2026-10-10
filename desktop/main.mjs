@@ -1,0 +1,506 @@
+import {
+  app,
+  BrowserWindow,
+  Menu,
+  dialog,
+  ipcMain,
+  safeStorage,
+  utilityProcess,
+  globalShortcut,
+  desktopCapturer,
+  screen,
+  shell,
+} from "electron";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import { cropRect } from "./geometry.mjs";
+import { preparePlugin } from "./plugin-setup.mjs";
+
+const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const profileDir = path.resolve(
+  process.env.KWB_PROFILE || path.join(os.homedir(), ".knowledge-workbench"),
+);
+fs.mkdirSync(profileDir, { recursive: true });
+app.setPath("userData", profileDir);
+app.setName("Knowledge Workbench");
+let window,
+  worker,
+  service,
+  closing = false,
+  captureActive = false;
+const overlayMap = new Map(),
+  pendingFlush = new Map();
+const runtimeFile = path.join(profileDir, "runtime.json");
+const writeJson = (file, data) => {
+  const tmp = file + "." + randomUUID() + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 0o600 });
+  fs.renameSync(tmp, file);
+};
+function validSender(event) {
+  if (
+    !window ||
+    event.sender !== window.webContents ||
+    event.senderFrame !== window.webContents.mainFrame
+  )
+    throw new Error("无效的应用窗口");
+}
+async function flush() {
+  if (!window || window.isDestroyed() || window.webContents.isLoading()) return;
+  const id = randomUUID();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingFlush.delete(id);
+      reject(new Error("保存确认超时；窗口已保留，请重试或复制未保存的文字。"));
+    }, 20000);
+    pendingFlush.set(id, { resolve, reject, timer });
+    window.webContents.send("workbench:flush", id);
+  });
+}
+ipcMain.on("workbench:flushed", (event, data) => {
+  validSender(event);
+  const pending = pendingFlush.get(data.id);
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  pendingFlush.delete(data.id);
+  data.error ? pending.reject(new Error(data.error)) : pending.resolve();
+});
+async function stopService() {
+  if (fs.existsSync(runtimeFile)) fs.unlinkSync(runtimeFile);
+  const child = worker;
+  worker = undefined;
+  service = undefined;
+  if (!child?.pid) return;
+  await new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve();
+    }, 8000);
+    child.once("exit", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    child.postMessage({ type: "shutdown" });
+  });
+}
+async function start(vaultDir) {
+  const preferredPort = service
+    ? Number(new URL(service.baseUrl).port)
+    : readPreferences().port;
+  await stopService();
+  const child = utilityProcess.fork(path.join(root, "build/service.cjs"), [], {
+    serviceName: "Knowledge Workbench files",
+    stdio: "pipe",
+  });
+  worker = child;
+  child.stderr?.on("data", (bytes) => {
+    if (!app.isPackaged) process.stderr.write(bytes);
+  });
+  service = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error("本地服务启动超时"));
+    }, 30000);
+    child.on("message", async (data) => {
+      if (data.type === "crypto") {
+        try {
+          if (!safeStorage.isEncryptionAvailable())
+            throw new Error("系统加密暂不可用，密钥未保存");
+          const value =
+            data.action === "encrypt"
+              ? safeStorage.encryptString(data.value).toString("base64")
+              : safeStorage.decryptString(Buffer.from(data.value, "base64"));
+          child.postMessage({ type: "crypto-result", id: data.id, value });
+        } catch (error) {
+          child.postMessage({
+            type: "crypto-result",
+            id: data.id,
+            error: error.message,
+          });
+        }
+      }
+      if (data.type === "desktop") {
+        try {
+          let value;
+          if (data.action === "capture") {
+            await beginCapture();
+            value = { ok: true };
+          } else if (data.action === "plugin")
+            value = preparePlugin({
+              root,
+              profileDir,
+              executable: process.execPath,
+              electron: true,
+            });
+          else if (data.action === "choose-vault") {
+            await flush();
+            const choice = await dialog.showOpenDialog(window, {
+              title: "选择 Obsidian 知识库",
+              properties: ["openDirectory"],
+            });
+            if (!choice.canceled) {
+              const vaultDir = choice.filePaths[0];
+              if (!fs.existsSync(path.join(vaultDir, ".obsidian")))
+                throw new Error("请选择包含 .obsidian 的知识库");
+              setTimeout(
+                () =>
+                  void start(vaultDir).catch((error) =>
+                    dialog.showErrorBox("知识库未打开", error.message),
+                  ),
+                250,
+              );
+              value = { reopening: true };
+            } else value = { reopening: false };
+          }
+          child.postMessage({ type: "crypto-result", id: data.id, value });
+        } catch (error) {
+          child.postMessage({
+            type: "crypto-result",
+            id: data.id,
+            error: error.message,
+          });
+        }
+      }
+      if (data.type === "ready") {
+        clearTimeout(timer);
+        resolve(data);
+      }
+      if (data.type === "error") {
+        clearTimeout(timer);
+        reject(new Error(data.message));
+      }
+    });
+    child.once("exit", (code) => {
+      clearTimeout(timer);
+      reject(new Error(`本地服务退出 (${code})`));
+      if (worker === child && !closing) {
+        service = undefined;
+        if (fs.existsSync(runtimeFile)) fs.unlinkSync(runtimeFile);
+        dialog.showErrorBox(
+          "本地服务已停止",
+          "请重启应用。编辑中的本机草稿会保留。",
+        );
+      }
+    });
+    child.postMessage({
+      type: "start",
+      options: {
+        vaultDir,
+        port: preferredPort,
+        dataDir: profileDir,
+        distDir: path.join(root, "dist"),
+      },
+    });
+  });
+  writeJson(runtimeFile, {
+    service: "knowledge-workbench",
+    apiVersion: 1,
+    baseUrl: service.baseUrl,
+    token: service.token,
+    vaultId: service.vaultId,
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+  });
+  writeJson(path.join(profileDir, "preferences.json"), {
+    vaultDir,
+    port: Number(new URL(service.baseUrl).port),
+  });
+  if (window) await window.loadURL(service.baseUrl);
+}
+async function request(method, route, body) {
+  if (!service) throw new Error("本地服务未连接");
+  const response = await fetch(service.baseUrl + "/api" + route, {
+    method,
+    headers: {
+      Authorization: "Bearer " + service.token,
+      "Content-Type": "application/json",
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    redirect: "error",
+  });
+  const data = await response.json();
+  if (!response.ok)
+    throw Object.assign(new Error(data.error), {
+      code: data.code,
+      details: data.details,
+      status: response.status,
+    });
+  return data;
+}
+async function chooseVault() {
+  await flush();
+  const result = await dialog.showOpenDialog(window, {
+    title: "选择 Obsidian 知识库文件夹",
+    properties: ["openDirectory"],
+  });
+  if (result.canceled) return;
+  const vaultDir = result.filePaths[0];
+  if (!fs.existsSync(path.join(vaultDir, ".obsidian")))
+    throw new Error(
+      "此文件夹没有 .obsidian。请先用 Obsidian 创建一个空库，或选择已有知识库。",
+    );
+  const previous = service;
+  try {
+    await start(vaultDir);
+  } catch (error) {
+    if (previous) await start(readPreferences().vaultDir).catch(() => {});
+    throw error;
+  }
+}
+function readPreferences() {
+  try {
+    return JSON.parse(
+      fs.readFileSync(path.join(profileDir, "preferences.json"), "utf8"),
+    );
+  } catch {
+    return {};
+  }
+}
+function endCapture() {
+  for (const { overlay } of overlayMap.values())
+    if (!overlay.isDestroyed()) overlay.destroy();
+  overlayMap.clear();
+  captureActive = false;
+  window?.show();
+  window?.focus();
+}
+async function beginCapture() {
+  if (captureActive) return;
+  if (!service?.vaultId) throw new Error("请先选择知识库");
+  captureActive = true;
+  window?.hide();
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const displays = screen.getAllDisplays();
+    const sources = await desktopCapturer.getSources({
+      types: ["screen"],
+      thumbnailSize: {
+        width: Math.max(
+          ...displays.map((d) => Math.ceil(d.size.width * d.scaleFactor)),
+        ),
+        height: Math.max(
+          ...displays.map((d) => Math.ceil(d.size.height * d.scaleFactor)),
+        ),
+      },
+      fetchWindowIcons: false,
+    });
+    // Freeze all images before showing overlays; cropping uses the actual returned size.
+    const frames = displays.map((display) => {
+      const source = sources.find((s) => s.display_id === String(display.id));
+      if (!source || source.thumbnail.isEmpty())
+        throw new Error("此显示器无法采集，请重试");
+      return { display, image: source.thumbnail };
+    });
+    for (const { display, image } of frames) {
+      const overlay = new BrowserWindow({
+        ...display.bounds,
+        show: false,
+        frame: false,
+        resizable: false,
+        movable: false,
+        alwaysOnTop: true,
+        skipTaskbar: true,
+        fullscreenable: false,
+        hasShadow: false,
+        backgroundColor: "#182b28",
+        webPreferences: {
+          preload: path.join(root, "desktop/capture-preload.cjs"),
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+        },
+      });
+      overlay.setMenuBarVisibility(false);
+      overlayMap.set(overlay.webContents.id, { overlay, display, image });
+      await overlay.loadFile(path.join(root, "desktop/capture.html"));
+      overlay.setBounds(display.bounds);
+      overlay.show();
+    }
+    const cursorDisplay = screen.getDisplayNearestPoint(
+      screen.getCursorScreenPoint(),
+    );
+    [...overlayMap.values()]
+      .find((x) => x.display.id === cursorDisplay.id)
+      ?.overlay.focus();
+  } catch (error) {
+    endCapture();
+    throw error;
+  }
+}
+ipcMain.handle("capture:image", (event) => {
+  const item = overlayMap.get(event.sender.id);
+  if (!item || event.senderFrame !== item.overlay.webContents.mainFrame)
+    throw new Error("截图窗口已关闭");
+  return item.image.toDataURL();
+});
+ipcMain.on("capture:cancel", (event) => {
+  if (overlayMap.has(event.sender.id)) endCapture();
+});
+ipcMain.handle("capture:select", async (event, rect) => {
+  const item = overlayMap.get(event.sender.id);
+  if (!item || event.senderFrame !== item.overlay.webContents.mainFrame)
+    throw new Error("截图窗口已关闭");
+  try {
+    const physical = item.image.getSize(),
+      crop = cropRect(rect, item.display.size, physical),
+      bytes = item.image.crop(crop).toPNG();
+    // The original selection is durably written before the user adds a thought.
+    const capture = await request("POST", "/captures", {
+      title: `截图 ${new Date().toLocaleString("zh-CN")}`,
+      text: "",
+      image: bytes.toString("base64"),
+    });
+    window?.webContents.send("workbench:captured", capture);
+    return { saved: true };
+  } catch (error) {
+    dialog.showErrorBox("截图未保存", error.message);
+    throw error;
+  } finally {
+    endCapture();
+  }
+});
+const routes = {
+  GET: /^\/(status|notes|note|history|relations|captures|jobs|proposals|settings|paperdesk\/source)(?:\?.*)?$/,
+  POST: /^\/(refresh|notes|note\/move|history\/restore|assets|captures|jobs|jobs\/[^/]+\/(run|pause|share)|proposals\/[^/]+\/(accept|reject|rebase)|settings\/provider\/test)$/,
+  PUT: /^\/(note|draft|settings\/(provider|paperdesk|appearance)|proposals\/[^/]+)$/,
+  DELETE: /^\/draft$/,
+};
+ipcMain.handle("workbench:request", async (event, input) => {
+  try {
+    validSender(event);
+    const { method, route, body } = input;
+    if (method === "DESKTOP") {
+      let data;
+      if (route === "/vault/choose") data = await chooseVault();
+      else if (route === "/capture") data = await beginCapture();
+      else if (route === "/external") {
+        const u = new URL(body.url);
+        if (
+          !["https:", "http:"].includes(u.protocol) ||
+          u.username ||
+          u.password
+        )
+          throw new Error("不支持此链接");
+        await shell.openExternal(u.href);
+      } else if (route === "/plugin/setup")
+        data = preparePlugin({
+          root,
+          profileDir,
+          executable: process.execPath,
+          electron: true,
+        });
+      else throw new Error("桌面操作不存在");
+      return { data };
+    }
+    if (!routes[method]?.test(route)) throw new Error("此窗口没有该接口的权限");
+    return { data: await request(method, route, body) };
+  } catch (error) {
+    return {
+      error: error.message,
+      code: error.code,
+      details: error.details,
+      status: error.status,
+    };
+  }
+});
+
+if (!app.requestSingleInstanceLock()) app.quit();
+else {
+  app.on("second-instance", (_event, argv) => {
+    if (argv.includes("--background")) return;
+    if (window?.isMinimized()) window.restore();
+    window?.show();
+    window?.focus();
+  });
+  app
+    .whenReady()
+    .then(async () => {
+      Menu.setApplicationMenu(null);
+      await start(process.env.KWB_VAULT || readPreferences().vaultDir);
+      window = new BrowserWindow({
+        width: 1390,
+        height: 900,
+        minWidth: 960,
+        minHeight: 640,
+        show: false,
+        backgroundColor: "#fbfaf6",
+        title: "Knowledge Workbench · 知识工作台",
+        webPreferences: {
+          preload: path.join(root, "desktop/preload.cjs"),
+          contextIsolation: true,
+          sandbox: true,
+          nodeIntegration: false,
+          spellcheck: false,
+        },
+      });
+      window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+      window.webContents.on("will-navigate", (event, url) => {
+        if (!service || new URL(url).origin !== service.baseUrl)
+          event.preventDefault();
+      });
+      window.webContents.session.setPermissionRequestHandler(
+        (_wc, _permission, callback) => callback(false),
+      );
+      window.webContents.on("will-attach-webview", (event) =>
+        event.preventDefault(),
+      );
+      window.on("close", (event) => {
+        if (closing) return;
+        event.preventDefault();
+        void flush()
+          .then(async () => {
+            closing = true;
+            globalShortcut.unregisterAll();
+            endCapture();
+            await stopService();
+            window.destroy();
+            app.quit();
+          })
+          .catch((error) =>
+            dialog.showMessageBox(window, {
+              type: "warning",
+              title: "笔记尚未保存",
+              message: error.message,
+              detail: "请处理保存提示后再关闭。输入已保留在本机草稿中。",
+              buttons: ["返回编辑"],
+            }),
+          );
+      });
+      await window.loadURL(service.baseUrl);
+      if (!process.argv.includes("--background")) window.show();
+      if (
+        !globalShortcut.register(
+          "CommandOrControl+Alt+S",
+          () =>
+            void beginCapture().catch((error) =>
+              dialog.showErrorBox("截图未开始", error.message),
+            ),
+        )
+      )
+        dialog.showMessageBox(window, {
+          type: "info",
+          message: "Ctrl + Alt + S 已被其他程序占用",
+          detail: "仍可从收集箱点击“框选截图”。",
+          buttons: ["知道了"],
+        });
+    })
+    .catch(async (error) => {
+      dialog.showErrorBox("知识工作台未能启动", error.message);
+      closing = true;
+      await stopService();
+      app.quit();
+    });
+  app.on("before-quit", (event) => {
+    if (window && !window.isDestroyed() && !closing) {
+      event.preventDefault();
+      window.close();
+    }
+  });
+  app.on("will-quit", () => {
+    globalShortcut.unregisterAll();
+    worker?.kill();
+    if (fs.existsSync(runtimeFile)) fs.unlinkSync(runtimeFile);
+  });
+}
