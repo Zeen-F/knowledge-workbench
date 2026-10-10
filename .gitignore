@@ -1,6 +1,7 @@
 node_modules/
 dist/
 build/
+plugins/knowledge-workbench/ui/workbench.html
 release/
 .local/
 output/

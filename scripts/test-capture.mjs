@@ -40,6 +40,7 @@ try {
         frame: false,
         show: false,
         skipTaskbar: true,
+        alwaysOnTop: true,
         backgroundColor: "#40a070",
         webPreferences: { sandbox: true },
       });

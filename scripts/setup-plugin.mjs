@@ -1,5 +1,6 @@
 import path from "node:path";
 import os from "node:os";
+import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { preparePlugin } from "../desktop/plugin-setup.mjs";
@@ -7,10 +8,21 @@ import { codexCommand } from "./codex-command.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const profileDir =
   process.env.KWB_PROFILE || path.join(os.homedir(), ".knowledge-workbench");
+const installed = process.argv.includes("--installed-runtime")
+  ? JSON.parse(fs.readFileSync(path.join(profileDir, "launch.json"), "utf8"))
+  : null;
+if (
+  installed &&
+  (!path.isAbsolute(installed.executable) ||
+    !fs.existsSync(installed.executable))
+)
+  throw new Error("已安装桌面运行时不可用；请先打开桌面工作台。");
 const result = preparePlugin({
   root,
   profileDir,
-  executable: process.execPath,
+  executable: installed?.executable || process.execPath,
+  electron: Boolean(installed),
+  preserveLaunch: Boolean(installed),
 });
 console.log(result.message);
 if (process.argv.includes("--install")) {

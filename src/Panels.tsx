@@ -28,6 +28,13 @@ import {
 } from "./client";
 import { assetUrl, renderMarkdown } from "./markdown";
 import { Editor } from "./Editor";
+import {
+  recoveryKey,
+  readRecovery,
+  writeRecovery,
+  clearRecovery,
+  flushRecovery,
+} from "./recovery";
 
 export function Modal({
   title,
@@ -112,6 +119,8 @@ type Common = {
 };
 
 export function Inbox({
+  vaultId,
+  capabilities,
   captures,
   notes,
   jobs,
@@ -119,20 +128,96 @@ export function Inbox({
   notify,
   refresh,
 }: {
+  vaultId: string;
+  capabilities: Record<string, boolean>;
   captures: Capture[];
   notes: NoteSummary[];
   jobs: Job[];
   onOpen: (path: string) => void;
 } & Common) {
+  type Input = { title: string; thought: string; requestId: string };
+  const key = recoveryKey(vaultId, "inbox");
+  const initial = readRecovery<Input>(key);
   const [selected, setSelected] = useState<string[]>([]),
-    [thought, setThought] = useState(""),
-    [title, setTitle] = useState(""),
+    [thought, setThought] = useState(initial?.thought || ""),
+    [title, setTitle] = useState(initial?.title || ""),
+    [inputState, setInputState] = useState(
+      initial ? "已恢复本机草稿，尚未写入知识库" : "原始想法会随材料保留。",
+    ),
     [batch, setBatch] = useState(false),
-    [executor, setExecutor] = useState<"api" | "codex">("api"),
+    [executor, setExecutor] = useState<"api" | "codex">(
+      window.workbench?.panel ? "codex" : "api",
+    ),
     [instruction, setInstruction] = useState(""),
     [references, setReferences] = useState<string[]>([]),
     [busy, setBusy] = useState(false);
+  const [deliveries, setDeliveries] = useState<Record<string, string>>({});
+  const sending = useRef(new Set<string>());
+  const batchPrompt = (id: string) =>
+    `请使用知识工作台插件处理共享批次 ${id}。读取指定批次和其中图片，保持材料顺序；整理为主题知识卡与学习记录，保留来源、适用条件、原始想法和待核对项。通过提交草稿工具返回结果，正式笔记由我在软件中审核。`;
+  async function sendBatch(id: string) {
+    if (sending.current.has(id) || !window.workbench?.sendToCodex) return;
+    sending.current.add(id);
+    setDeliveries((s) => ({ ...s, [id]: "发送中…" }));
+    try {
+      await window.workbench.sendToCodex(batchPrompt(id));
+      setDeliveries((s) => ({ ...s, [id]: "已发送" }));
+      notify("整理请求已发送到当前对话，结果将返回待审稿");
+    } catch (e) {
+      setDeliveries((s) => ({ ...s, [id]: "请核对对话" }));
+      notify(
+        (e as Error).message + " 请先核对对话是否收到；未收到时可复制指令。",
+        true,
+      );
+    }
+  }
   const fileInput = useRef<HTMLInputElement>(null);
+  const input = useRef<Input>(
+    initial || { title: "", thought: "", requestId: crypto.randomUUID() },
+  );
+  const inputBusy = useRef(false);
+  function changeInput(field: "title" | "thought", value: string) {
+    input.current = {
+      ...input.current,
+      [field]: value,
+      requestId: crypto.randomUUID(),
+    };
+    setTitle(input.current.title);
+    setThought(input.current.thought);
+    saveInputRecovery();
+  }
+  function saveInputRecovery() {
+    const durable = writeRecovery(key, input.current);
+    setInputState(
+      durable === "pending"
+        ? "正在保存本机恢复草稿…"
+        : durable
+          ? "已保留本机恢复草稿，尚未写入知识库"
+          : "恢复空间不可用，请保存后再关闭窗口",
+    );
+    if (durable === "pending") {
+      const requestId = input.current.requestId;
+      void flushRecovery(key)
+        .then(() => {
+          if (input.current.requestId === requestId)
+            setInputState("已保留本机恢复草稿，尚未写入知识库");
+        })
+        .catch((e) => {
+          if (input.current.requestId === requestId)
+            setInputState("恢复草稿未保存，请保留面板并重试：" + e.message);
+        });
+    }
+  }
+  useEffect(() => {
+    const protect = (event: BeforeUnloadEvent) => {
+      if (input.current.title || input.current.thought) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", protect);
+    return () => window.removeEventListener("beforeunload", protect);
+  }, []);
   const importFiles = async (files: File[]) => {
     setBusy(true);
     try {
@@ -152,20 +237,38 @@ export function Inbox({
     }
   };
   const createThought = async () => {
-    if (!thought.trim()) return;
+    if (!input.current.thought.trim() || inputBusy.current) return;
+    inputBusy.current = true;
+    const sent = { ...input.current };
     setBusy(true);
+    setInputState("正在保存到知识库…");
     try {
       await api("POST", "/captures", {
-        title: title.trim() || thought.trim().split("\n")[0].slice(0, 35),
-        text: thought,
+        title:
+          sent.title.trim() || sent.thought.trim().split("\n")[0].slice(0, 35),
+        text: sent.thought,
+        requestId: sent.requestId,
       });
-      setThought("");
-      setTitle("");
+      if (
+        input.current.requestId === sent.requestId &&
+        (!readRecovery(key) || (await clearRecovery(key, sent)))
+      ) {
+        input.current = {
+          title: "",
+          thought: "",
+          requestId: crypto.randomUUID(),
+        };
+        setThought("");
+        setTitle("");
+        setInputState("想法已写入知识库");
+      } else setInputState("上次输入已保存，新增输入保留为本机草稿");
       await refresh();
       notify("想法已保存");
     } catch (e) {
+      setInputState("保存失败，输入已保留；可重试");
       notify((e as Error).message, true);
     } finally {
+      inputBusy.current = false;
       setBusy(false);
     }
   };
@@ -245,6 +348,12 @@ export function Inbox({
       </div>
       <div className="capture-actions">
         <button
+          disabled={!capabilities.capture}
+          title={
+            capabilities.capture
+              ? "框选测试或学习内容"
+              : "当前浏览器服务不支持系统截图，请在桌面应用截图或导入图片"
+          }
           onClick={() => {
             if (window.workbench)
               void window.workbench
@@ -258,7 +367,12 @@ export function Inbox({
         >
           <ScanLine size={21} />
           <span>
-            框选截图<small>Ctrl + Alt + S</small>
+            框选截图
+            <small>
+              {capabilities.capture
+                ? "Ctrl + Alt + S"
+                : "需要桌面服务 · 可导入图片"}
+            </small>
           </span>
         </button>
         <button onClick={() => fileInput.current?.click()} disabled={busy}>
@@ -284,16 +398,21 @@ export function Inbox({
           aria-label="想法标题"
           placeholder="给这次想法起个标题（可选）"
           value={title}
-          onChange={(e) => setTitle(e.target.value)}
+          onChange={(e) => changeInput("title", e.target.value)}
         />
         <textarea
           aria-label="快速记录想法"
           placeholder="刚才看到什么？有什么不确定，或者想试着推导一下？"
           value={thought}
-          onChange={(e) => setThought(e.target.value)}
+          onChange={(e) => changeInput("thought", e.target.value)}
         />
         <footer>
-          <span>原始想法会随材料保留。</span>
+          <span role="status">{inputState}</span>
+          {inputState.startsWith("恢复草稿未保存") && (
+            <button className="secondary" onClick={saveInputRecovery}>
+              重试恢复草稿
+            </button>
+          )}
           <button
             className="secondary"
             disabled={busy || !thought.trim()}
@@ -386,16 +505,29 @@ export function Inbox({
                   {j.error && <p className="error-text">{j.error}</p>}
                 </div>
                 <div className="job-actions">
+                  {window.workbench?.sendToCodex &&
+                    j.executor === "codex" &&
+                    ["shared", "review"].includes(j.state) && (
+                      <button
+                        className="text-button"
+                        disabled={Boolean(deliveries[j.id])}
+                        onClick={() => void sendBatch(j.id)}
+                      >
+                        <Sparkles size={15} />
+                        {deliveries[j.id] || "交给当前 Codex 对话"}
+                      </button>
+                    )}
                   {j.executor === "codex" &&
                     ["shared", "review"].includes(j.state) && (
                       <button
                         className="text-button"
                         onClick={() =>
                           void navigator.clipboard
-                            .writeText(
-                              `请使用知识工作台插件处理共享批次 ${j.id}。读取指定批次和其中图片，保持材料顺序；整理为主题知识卡与学习记录，保留来源、适用条件、原始想法和待核对项。通过提交草稿工具返回结果，正式笔记由我在软件中审核。`,
-                            )
+                            .writeText(batchPrompt(j.id))
                             .then(() => notify("Codex 指令已复制"))
+                            .catch((e) =>
+                              notify("复制失败：" + e.message, true),
+                            )
                         }
                       >
                         <Clipboard size={15} />
@@ -535,12 +667,14 @@ export function Inbox({
 }
 
 export function Review({
+  vaultId,
   proposals,
   jobs,
   onOpen,
   notify,
   refresh,
 }: {
+  vaultId: string;
   proposals: Proposal[];
   jobs: Job[];
   onOpen: (path: string) => void;
@@ -559,6 +693,8 @@ export function Review({
     } | null>(null),
     saving = useRef<Promise<void> | null>(null),
     saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const locked = useRef(false);
+  const reviewKey = (id: string) => recoveryKey(vaultId, "review", id);
   const pending = proposals.filter((p) => p.status === "pending"),
     proposal = pending.find((p) => p.id === id) || pending[0],
     job = jobs.find((j) => j.id === proposal?.jobId);
@@ -575,6 +711,18 @@ export function Review({
         });
         edit.hash = saved.draftHash;
         edit.dirty = edit.text !== value;
+        if (edit.dirty)
+          writeRecovery(reviewKey(edit.id), {
+            text: edit.text,
+            hash: edit.hash,
+          });
+        else {
+          const stored = readRecovery<{ text: string; hash: string }>(
+            reviewKey(edit.id),
+          );
+          if (stored?.text === value)
+            await clearRecovery(reviewKey(edit.id), stored);
+        }
       }
     })();
     saving.current = work;
@@ -585,10 +733,21 @@ export function Review({
     }
   }
   function changeReview(value: string) {
+    if (locked.current) return;
     setText(value);
     if (!editing.current) return;
     editing.current.text = value;
     editing.current.dirty = true;
+    const persisted = writeRecovery(reviewKey(editing.current.id), {
+      text: value,
+      hash: editing.current.hash,
+    });
+    if (persisted === false)
+      notify("审核恢复空间不可用，请保持窗口开启并立即保存。", true);
+    if (persisted === "pending")
+      void flushRecovery(reviewKey(editing.current.id)).catch((e) =>
+        notify("审核恢复草稿未保存，请保留面板：" + e.message, true),
+      );
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(
       () => void persist().catch((e) => notify(e.message, true)),
@@ -596,37 +755,58 @@ export function Review({
     );
   }
   useEffect(() => {
-    const value = proposal?.recovery ?? proposal?.markdown ?? "";
+    let current = true;
+    const local =
+      proposal &&
+      readRecovery<{ text: string; hash: string }>(reviewKey(proposal.id));
+    const value = local?.text ?? proposal?.recovery ?? proposal?.markdown ?? "";
     setText(value);
     editing.current = proposal
       ? {
           id: proposal.id,
           text: value,
-          hash: proposal.draftHash,
-          dirty: Boolean(proposal.recovery),
+          hash: local?.hash ?? proposal.draftHash,
+          dirty: Boolean(local || proposal.recovery),
         }
       : null;
     setDiff(false);
     setBefore("");
+    setTargetHash("");
     if (proposal?.targetPath)
       void api("GET", "/note?path=" + encodeURIComponent(proposal.targetPath))
         .then((n) => {
+          if (!current) return;
           setBefore(n.owner === "paperdesk" ? n.body : n.content);
           setTargetHash(n.hash);
         })
-        .catch((e) => notify(e.message, true));
+        .catch((e) => {
+          if (current) notify(e.message, true);
+        });
+    return () => {
+      current = false;
+    };
   }, [proposal?.id]);
   useEffect(() => {
+    const beforeUnload = (e: BeforeUnloadEvent) => {
+      if (editing.current?.dirty) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", beforeUnload);
     const unregister = window.workbench?.onFlush(persist);
     return () => {
       unregister?.();
+      window.removeEventListener("beforeunload", beforeUnload);
       void persist().catch((e) =>
         notify("审核编辑已保留为本机草稿：" + e.message, true),
       );
     };
   }, []);
   const rebase = async () => {
-    if (!proposal) return;
+    if (!proposal || locked.current) return;
+    locked.current = true;
+    setBusy(true);
     try {
       await persist();
       const result = await api<Proposal>(
@@ -639,15 +819,19 @@ export function Review({
       notify("修订基准已更新，请继续核对正文后确认保存。");
     } catch (e) {
       notify((e as Error).message, true);
+    } finally {
+      locked.current = false;
+      setBusy(false);
     }
   };
   const accept = async () => {
-    if (!proposal) return;
+    if (!proposal || locked.current) return;
+    locked.current = true;
     setBusy(true);
     try {
       await persist();
       const saved = await api("POST", `/proposals/${proposal.id}/accept`, {
-        markdown: text,
+        markdown: editing.current?.text,
         expectedHash: editing.current?.hash,
       });
       await refresh();
@@ -656,6 +840,7 @@ export function Review({
     } catch (e) {
       notify((e as Error).message, true);
     } finally {
+      locked.current = false;
       setBusy(false);
     }
   };
@@ -681,6 +866,7 @@ export function Review({
             {pending.map((p) => (
               <button
                 key={p.id}
+                disabled={busy}
                 aria-pressed={p.id === proposal.id}
                 onClick={() => {
                   void persist()
@@ -764,7 +950,7 @@ export function Review({
                   path={proposal.path}
                   content={text}
                   source={false}
-                  readOnly={Boolean(proposal.unavailable)}
+                  readOnly={busy || Boolean(proposal.unavailable)}
                   onChange={changeReview}
                 />
               )}
@@ -773,14 +959,21 @@ export function Review({
                 <button
                   className="secondary"
                   disabled={busy || Boolean(proposal.unavailable)}
-                  onClick={() =>
+                  onClick={() => {
+                    if (locked.current) return;
+                    locked.current = true;
+                    setBusy(true);
                     void persist()
                       .then(() =>
                         api("POST", `/proposals/${proposal.id}/reject`),
                       )
                       .then(refresh)
                       .catch((e) => notify(e.message, true))
-                  }
+                      .finally(() => {
+                        locked.current = false;
+                        setBusy(false);
+                      });
+                  }}
                 >
                   退回
                 </button>
@@ -802,10 +995,11 @@ export function Review({
 }
 
 export function Settings({
+  capabilities,
   onClose,
   notify,
   refresh,
-}: { onClose: () => void } & Common) {
+}: { onClose: () => void; capabilities: Record<string, boolean> } & Common) {
   const [baseUrl, setBaseUrl] = useState("https://api.openai.com/v1"),
     [model, setModel] = useState(""),
     [key, setKey] = useState(""),
@@ -880,84 +1074,106 @@ export function Settings({
         </div>
         <p className="muted">偏好保存在本机，重新打开后沿用。</p>
       </section>
-      <section className="settings-section">
-        <div className="section-label">
-          <Settings2 size={15} />
-          模型接口
-        </div>
-        <p className="muted">
-          仅在你开始整理时发送选定材料。测试连接只发送一条固定短句。
-        </p>
-        <label>
-          服务地址
-          <input
-            value={baseUrl}
-            onChange={(e) => {
-              setBaseUrl(e.target.value);
-              setResult("");
-            }}
-          />
-        </label>
-        <div className="form-row">
-          <label>
-            协议
-            <select
-              value={protocol}
-              onChange={(e) => setProtocol(e.target.value)}
-            >
-              <option value="responses">Responses</option>
-              <option value="chat-completions">Chat Completions</option>
-            </select>
-          </label>
-          <label>
-            模型名称
-            <input
-              value={model}
-              placeholder="支持图像输入的模型"
-              onChange={(e) => {
-                setModel(e.target.value);
-                setResult("");
-              }}
-            />
-          </label>
-        </div>
-        <label>
-          API 密钥
-          <input
-            type="password"
-            autoComplete="off"
-            value={key}
-            placeholder={
-              hasKey ? "已保存；留空沿用现有密钥" : "输入密钥，仅在本机加密保存"
-            }
-            onChange={(e) => {
-              setKey(e.target.value);
-              setResult("");
-            }}
-          />
-        </label>
-        <div className="button-row">
-          <button
-            className="secondary"
-            disabled={busy || !model}
-            onClick={() => void providerAction(true)}
-          >
-            测试连接
-          </button>
-          <button
-            className="primary"
-            disabled={busy || !model}
-            onClick={() => void providerAction(false)}
-          >
-            保存配置
-          </button>
-        </div>
-        {result && (
-          <p role="status" className="settings-result">
-            {result}
+      {window.workbench?.panel ? (
+        <section className="settings-section">
+          <div className="section-label">模型接口</div>
+          <p className="muted">
+            模型和密钥请在桌面工作台设置。此面板沿用已保存的配置；使用 Codex
+            整理无需填写 API 密钥。
           </p>
-        )}
-      </section>
+        </section>
+      ) : (
+        <section className="settings-section">
+          <div className="section-label">
+            <Settings2 size={15} />
+            模型接口
+          </div>
+          <p className="muted">
+            仅在你开始整理时发送选定材料。测试连接只发送一条固定短句。
+          </p>
+          {!capabilities.secureCredentials && (
+            <p role="status">
+              当前入口不支持系统密钥加密，请在桌面应用配置模型。
+            </p>
+          )}
+          <fieldset
+            disabled={!capabilities.secureCredentials || busy}
+            style={{ border: 0, padding: 0, margin: 0 }}
+          >
+            <label>
+              服务地址
+              <input
+                value={baseUrl}
+                onChange={(e) => {
+                  setBaseUrl(e.target.value);
+                  setResult("");
+                }}
+              />
+            </label>
+            <div className="form-row">
+              <label>
+                协议
+                <select
+                  value={protocol}
+                  onChange={(e) => setProtocol(e.target.value)}
+                >
+                  <option value="responses">Responses</option>
+                  <option value="chat-completions">Chat Completions</option>
+                </select>
+              </label>
+              <label>
+                模型名称
+                <input
+                  value={model}
+                  placeholder="支持图像输入的模型"
+                  onChange={(e) => {
+                    setModel(e.target.value);
+                    setResult("");
+                  }}
+                />
+              </label>
+            </div>
+            <label>
+              API 密钥
+              <input
+                type="password"
+                autoComplete="off"
+                value={key}
+                placeholder={
+                  hasKey
+                    ? "已保存；留空沿用现有密钥"
+                    : "输入密钥，仅在本机加密保存"
+                }
+                onChange={(e) => {
+                  setKey(e.target.value);
+                  setResult("");
+                }}
+              />
+            </label>
+            <div className="button-row">
+              <button
+                className="secondary"
+                disabled={busy || !model}
+                onClick={() => void providerAction(true)}
+              >
+                测试连接
+              </button>
+              <button
+                className="primary"
+                disabled={busy || !model}
+                onClick={() => void providerAction(false)}
+              >
+                保存配置
+              </button>
+            </div>
+            {result && (
+              <p role="status" className="settings-result">
+                {result}
+              </p>
+            )}
+          </fieldset>
+        </section>
+      )}
       <section className="settings-section">
         <div className="section-label">纸间 Paperdesk</div>
         <label>
@@ -983,29 +1199,41 @@ export function Settings({
       </section>
       <section className="settings-section">
         <div className="section-label">Codex 插件</div>
+        {!window.workbench?.panel && !capabilities.plugin && (
+          <p className="muted">
+            当前入口不能准备本地插件，请在桌面应用完成准备。
+          </p>
+        )}
         <p className="muted">
           先在收集箱建立共享批次，再在 Codex
           对话中要求整理。插件只读取你共享的材料，返回待审草稿。
         </p>
-        <button
-          className="secondary"
-          onClick={() => {
-            if (window.workbench)
-              void window.workbench
-                .invoke("DESKTOP", "/plugin/setup")
-                .then((r) => {
-                  setPlugin(r.message);
-                  notify("本地插件配置已生成");
-                })
-                .catch((e) => notify(e.message, true));
-            else
-              void nativeAction("plugin")
-                .then((r) => setPlugin(r.message))
-                .catch((e) => notify(e.message, true));
-          }}
-        >
-          准备本地插件
-        </button>
+        {window.workbench?.panel ? (
+          <p role="status">
+            Codex 原生面板已连接。可直接编辑、收集材料和审核草稿。
+          </p>
+        ) : (
+          <button
+            className="secondary"
+            disabled={!capabilities.plugin}
+            onClick={() => {
+              if (window.workbench)
+                void window.workbench
+                  .invoke("DESKTOP", "/plugin/setup")
+                  .then((r) => {
+                    setPlugin(r.message);
+                    notify("本地插件配置已生成");
+                  })
+                  .catch((e) => notify(e.message, true));
+              else
+                void nativeAction("plugin")
+                  .then((r) => setPlugin(r.message))
+                  .catch((e) => notify(e.message, true));
+            }}
+          >
+            准备本地插件
+          </button>
+        )}
         {plugin && <pre className="plugin-instructions">{plugin}</pre>}
       </section>
       <footer className="modal-footer">

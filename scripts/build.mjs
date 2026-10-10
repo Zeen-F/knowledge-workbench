@@ -9,6 +9,26 @@ const common = {
   logLevel: "info",
   legalComments: "eof",
 };
+// Ship one self-contained native resource; no nested local website or CDN.
+const panel = await build({
+  entryPoints: ["src/panel.tsx"],
+  bundle: true,
+  write: false,
+  outdir: "build/panel",
+  platform: "browser",
+  format: "iife",
+  target: "chrome120",
+  minify: true,
+  define: { "process.env.NODE_ENV": '"production"' },
+  loader: { ".woff": "dataurl", ".woff2": "dataurl", ".ttf": "dataurl" },
+});
+const js = panel.outputFiles.find((f) => f.path.endsWith(".js")).text;
+const css = panel.outputFiles.find((f) => f.path.endsWith(".css")).text;
+fs.mkdirSync("plugins/knowledge-workbench/ui", { recursive: true });
+fs.writeFileSync(
+  "plugins/knowledge-workbench/ui/workbench.html",
+  `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>知识工作台</title><style>${css.replaceAll("</style", "<\\/style")}</style></head><body><div id="root" role="main">正在连接知识工作台…</div><script>${js.replaceAll("</script", "<\\/script")}</script></body></html>`,
+);
 await build({
   ...common,
   entryPoints: ["server/entry.ts"],

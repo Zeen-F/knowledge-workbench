@@ -8,11 +8,17 @@ export async function api<T = any>(
   method: string,
   route: string,
   body?: unknown,
+  retry = true,
 ): Promise<T> {
   if (window.workbench) return window.workbench.invoke(method, route, body);
-  ready ||= fetch("/api/session", { credentials: "same-origin" }).then((r) => {
-    if (!r.ok) throw new Error("无法连接本地服务");
-  });
+  ready ||= fetch("/api/session", { credentials: "same-origin" })
+    .then((r) => {
+      if (!r.ok) throw new Error("无法连接本地服务");
+    })
+    .catch((e) => {
+      ready = undefined;
+      throw e;
+    });
   await ready;
   const r = await fetch("/api" + route, {
     method,
@@ -21,6 +27,10 @@ export async function api<T = any>(
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const data = await r.json();
+  if (r.status === 401 && data.code === "SESSION_EXPIRED" && retry) {
+    ready = undefined;
+    return api<T>(method, route, body, false);
+  }
   if (!r.ok) {
     const error = new ApiError(data.error || "请求未完成");
     error.code = data.code;

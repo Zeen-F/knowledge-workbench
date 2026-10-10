@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { removeTestDirectory } from "./test-cleanup.mjs";
 import { spawn, spawnSync } from "node:child_process";
 import { createInterface } from "node:readline";
@@ -10,7 +11,7 @@ import { codexCommand } from "./codex-command.mjs";
 
 fs.mkdirSync(".local", { recursive: true });
 const root = fs.realpathSync.native(
-    fs.mkdtempSync(path.resolve(".local/codex-host-")),
+    fs.mkdtempSync(path.join(os.tmpdir(), "kwb-codex-host-")),
   ),
   profile = path.join(root, "workbench"),
   codexHome = path.join(root, "codex"),
@@ -152,6 +153,17 @@ try {
       " diagnostics " +
       diagnostics,
   );
+  const descriptors = Object.values(server.tools || {});
+  const openTool = descriptors.find((t) => t.name === "workbench_open");
+  assert.equal(openTool?.title, "打开知识工作台");
+  assert.equal(
+    openTool?._meta?.ui?.resourceUri,
+    "ui://knowledge-workbench/panel-v1.html",
+  );
+  assert.deepEqual(openTool?._meta?.["openai/ui"]?.entrypoints, [
+    { type: "global" },
+    { type: "thread" },
+  ]);
   const call = async (tool, args = {}) => {
     const r = await rpc("mcpServer/tool/call", {
       threadId,
@@ -202,6 +214,7 @@ try {
         "installed-local-plugin",
         "discovered-tools",
         "open-url",
+        "native-panel-entrypoint-metadata",
         "read-scoped-material",
         "draft-roundtrip",
       ],
@@ -230,5 +243,5 @@ try {
     });
   }
   await service.close();
-  await removeTestDirectory(root, path.resolve(".local"));
+  await removeTestDirectory(root, os.tmpdir());
 }

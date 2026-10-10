@@ -1,7 +1,7 @@
 name: Windows checks
 on:
   push:
-    branches: [main, "feat/**", "fix/**"]
+    branches: [main, "feat/**", "fix/**", "codex/**"]
   pull_request:
   workflow_dispatch:
 permissions:
@@ -35,11 +35,15 @@ jobs:
         working-directory: .local/paperdesk-integration
       - run: npx.cmd playwright install chromium
         timeout-minutes: 5
+      - run: npm.cmd run test:panel
+      - run: npm.cmd run test:reliability-ui
       - run: npm.cmd run test:paperdesk -- .local/paperdesk-integration
       - run: npm.cmd audit --omit=dev --audit-level=moderate
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: interface-evidence
-          path: output/playwright/
+          path: |
+            output/playwright/
+            output/reliability/
           retention-days: 7

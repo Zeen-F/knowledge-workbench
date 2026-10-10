@@ -6,6 +6,7 @@ export function preparePlugin({
   profileDir,
   executable,
   electron = false,
+  preserveLaunch = false,
 }) {
   const marketplace = path.join(profileDir, "plugin-marketplace");
   const plugin = path.join(marketplace, "plugins", "knowledge-workbench");
@@ -89,13 +90,14 @@ export function preparePlugin({
         "node_modules/electron/dist",
         process.platform === "win32" ? "electron.exe" : "electron",
       );
-  fs.writeFileSync(
-    path.join(profileDir, "launch.json"),
-    JSON.stringify({
-      executable: launchExecutable,
-      args: packaged ? ["--background"] : [root, "--background"],
-    }),
-  );
+  if (!preserveLaunch)
+    fs.writeFileSync(
+      path.join(profileDir, "launch.json"),
+      JSON.stringify({
+        executable: launchExecutable,
+        args: packaged ? ["--background"] : [root, "--background"],
+      }),
+    );
   return {
     marketplace,
     message: `插件已准备。请在终端执行：\n\ncodex plugin marketplace add "${marketplace}"\ncodex plugin add knowledge-workbench@knowledge-workbench-local\n\n随后在 Codex 新对话中启用插件。软件必须保持打开。`,

@@ -13,11 +13,14 @@ async function fixture(t: any) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "kwb-api-")),
     vaultDir = path.join(root, "vault");
   fs.mkdirSync(path.join(vaultDir, ".obsidian"), { recursive: true });
-  const publicDir=path.join(root,".hidden-runtime","dist");
-  fs.mkdirSync(publicDir,{recursive:true});
-  fs.writeFileSync(path.join(publicDir,"index.html"),"<title>Packaged workbench</title>");
+  const publicDir = path.join(root, ".hidden-runtime", "dist");
+  fs.mkdirSync(publicDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(publicDir, "index.html"),
+    "<title>Packaged workbench</title>",
+  );
   const service = await startService({
-    distDir:publicDir,
+    distDir: publicDir,
     vaultDir,
     dataDir: path.join(root, "profile"),
     encrypt: async (v) => "test-encrypted:" + v,
@@ -47,9 +50,9 @@ async function fixture(t: any) {
 
 test("HTTP requires session, validates origin and persists appearance preference", async (t) => {
   const { service, request } = await fixture(t);
-  const page=await fetch(service.baseUrl);
-  assert.equal(page.status,200);
-  assert.match(await page.text(),/Packaged workbench/);
+  const page = await fetch(service.baseUrl);
+  assert.equal(page.status, 200);
+  assert.match(await page.text(), /Packaged workbench/);
   assert.equal((await fetch(service.baseUrl + "/api/notes")).status, 401);
   assert.equal(
     (

@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { PANEL_RESOURCE, registerPanel } from "./panel.ts";
 import {
   draftProposalSchema,
   hashSchema,
@@ -15,8 +16,9 @@ const profileDir =
   process.env.KWB_PROFILE || path.join(os.homedir(), ".knowledge-workbench");
 const server = new McpServer({
   name: "knowledge-workbench-mcp-server",
-  version: "0.1.0-alpha.1",
+  version: "0.1.0-alpha.3",
 });
+registerPanel(server, profileDir, path.join(__dirname, "../ui/workbench.html"));
 async function api(route: string, body?: unknown) {
   let runtime: any;
   try {
@@ -105,9 +107,14 @@ const snapshot = (id: string): Promise<BatchSnapshot> =>
 server.registerTool(
   "workbench_open",
   {
+    title: "打开知识工作台",
     description:
-      "打开本机知识工作台，返回经过身份核对的 URL。随后使用 Codex 的 open_in_codex 工具，以 target.type=browser 和此 URL 在当前对话右侧打开，用户可直接编辑。若未运行则唤起已配置的桌面运行时。不发送笔记给模型。",
+      "打开 Codex 原生知识工作台面板，编辑笔记、收集材料与审核草稿。返回本机备用 URL；宿主不支持原生面板时才用 open_in_codex 打开。若未运行则唤起已配置的桌面运行时。打开不向模型共享笔记。",
     inputSchema: {},
+    _meta: {
+      ui: { resourceUri: PANEL_RESOURCE },
+      "openai/ui": { entrypoints: [{ type: "global" }, { type: "thread" }] },
+    },
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
