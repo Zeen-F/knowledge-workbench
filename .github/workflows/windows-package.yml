@@ -1,10 +1,20 @@
 name: Windows preview package
 on:
   workflow_dispatch:
+    inputs:
+      artifact_run:
+        description: Successful package run to upload (leave empty to build)
+        type: string
+        default: ""
+      release_tag:
+        description: Existing draft release tag for the selected package run
+        type: string
+        default: ""
 permissions:
   contents: read
 jobs:
   package:
+    if: inputs.artifact_run == ''
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -57,4 +67,36 @@ jobs:
             release/*.exe
             release/*.blockmap
             output/playwright/packaged-paperdesk/
+          retention-days: 14
+  upload_release:
+    if: inputs.artifact_run != ''
+    runs-on: windows-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PACKAGE_RUN: ${{ inputs.artifact_run }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify the selected package and draft release
+        shell: pwsh
+        run: .github/scripts/upload-preview.ps1 -ValidateOnly
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-x64-preview
+          run-id: ${{ inputs.artifact_run }}
+          github-token: ${{ github.token }}
+          path: .local/release-upload
+      - name: Upload verified assets and checksums to the draft
+        shell: pwsh
+        run: .github/scripts/upload-preview.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-upload-verification
+          path: |
+            .local/release-upload/release/BUILDINFO.json
+            .local/release-upload/release/SHA256SUMS.txt
           retention-days: 14
