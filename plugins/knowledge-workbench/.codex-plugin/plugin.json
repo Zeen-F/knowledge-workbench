@@ -1,6 +1,6 @@
 {
   "name": "knowledge-workbench",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-alpha.4",
   "description": "处理知识工作台主动共享的学习材料，返回可追溯的待审草稿。",
   "author": {
     "name": "Zeen-F"
