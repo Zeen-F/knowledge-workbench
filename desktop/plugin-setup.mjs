@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createRequire } from "node:module";
 
 export function preparePlugin({
   root,
@@ -85,11 +86,7 @@ export function preparePlugin({
   const packaged = root.endsWith(".asar");
   const launchExecutable = electron
     ? executable
-    : path.join(
-        root,
-        "node_modules/electron/dist",
-        process.platform === "win32" ? "electron.exe" : "electron",
-      );
+    : createRequire(path.join(root, "package.json"))("electron");
   if (!preserveLaunch)
     fs.writeFileSync(
       path.join(profileDir, "launch.json"),

@@ -232,10 +232,12 @@ try {
   await expect(frame.locator(".katex-display")).toBeVisible();
   const editor = frame.getByLabel("笔记编辑器");
   await editor.click();
-  await editor.press("Control+End");
+  await editor.press(
+    process.platform === "darwin" ? "Meta+ArrowDown" : "Control+End",
+  );
   await editor.press("Enter");
   await page.keyboard.insertText("原生面板中文保存验证");
-  await editor.press("Control+s");
+  await editor.press("ControlOrMeta+s");
   await expect
     .poll(() => fs.readFileSync(path.join(vault, "从一个问题开始.md"), "utf8"))
     .toContain("原生面板中文保存验证");
@@ -385,7 +387,7 @@ try {
     frame.getByRole("button", { name: "确认并保存", exact: true }),
   ).toBeVisible();
   await frame.getByLabel("笔记编辑器").click();
-  await frame.getByLabel("笔记编辑器").press("Control+a");
+  await frame.getByLabel("笔记编辑器").press("ControlOrMeta+a");
   failReviewSave = true;
   await page.keyboard.insertText("# 已审核\n\n用户修改后接受，仍需核对。");
   await expect
@@ -423,7 +425,9 @@ try {
     .click();
   await expect(editor).toContainText("原生面板中文保存验证");
   await editor.click();
-  await editor.press("Control+End");
+  await editor.press(
+    process.platform === "darwin" ? "Meta+ArrowDown" : "Control+End",
+  );
   await page.keyboard.insertText("\n关闭面板前保存验证");
   await teardown();
   assert.ok(

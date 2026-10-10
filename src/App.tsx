@@ -1,4 +1,5 @@
 import { NoteTree } from "./NoteTree";
+import { primaryModifier } from "./platform";
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
@@ -614,7 +615,7 @@ export default function App() {
           disabled={!status?.vault}
         >
           <Plus size={16} />
-          写一篇笔记<kbd>Ctrl N</kbd>
+          写一篇笔记<kbd>{primaryModifier} N</kbd>
         </button>
         <label className="search-box">
           <Search size={15} />
@@ -1018,7 +1019,7 @@ export default function App() {
                             .catch((e) => notify(e.message, true))
                         }
                       >
-                        Ctrl S
+                        {primaryModifier} S
                       </button>
                     </span>
                   </footer>

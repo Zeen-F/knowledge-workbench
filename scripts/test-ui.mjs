@@ -4,10 +4,13 @@ import path from "node:path";
 import os from "node:os";
 import { createRequire } from "node:module";
 import { seed } from "./seed.mjs";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { preparePlugin } from "../desktop/plugin-setup.mjs";
 
 const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "kwb-ui-")),
-  vault = path.join(testRoot, "vault"),
-  profile = path.join(testRoot, "profile");
+  vault = path.join(testRoot, "知识库 中文 vault"),
+  profile = path.join(testRoot, "配置 中文 profile");
 seed(vault);
 fs.mkdirSync("output/playwright", { recursive: true });
 const env = { ...process.env, KWB_VAULT: vault, KWB_PROFILE: profile };
@@ -63,15 +66,28 @@ try {
     original,
   );
   const editor = page.getByLabel("笔记编辑器");
+  if (process.platform === "darwin") {
+    const roles = await app.evaluate(({ Menu }) =>
+      Menu.getApplicationMenu().items.flatMap((item) =>
+        (item.submenu?.items || []).map((child) => child.role),
+      ),
+    );
+    for (const role of ["quit", "close", "copy", "paste", "selectall"])
+      expect(roles).toContain(role);
+  }
   await editor.click();
-  await editor.press("Control+End");
+  await editor.press(
+    process.platform === "darwin" ? "Meta+ArrowDown" : "Control+End",
+  );
   await editor.press("Enter");
   await page.keyboard.insertText("中文补充：保存、撤销和重开测试。");
-  await editor.press("Control+s");
+  await editor.press("ControlOrMeta+s");
   await expect
     .poll(() => fs.readFileSync(path.join(vault, "从一个问题开始.md"), "utf8"))
     .toContain("中文补充");
-  await editor.press("Control+End");
+  await editor.press(
+    process.platform === "darwin" ? "Meta+ArrowDown" : "Control+End",
+  );
   await page.keyboard.insertText("UNDO_PROBE");
   await page
     .getByRole("button", { name: "今天的学习记录", exact: true })
@@ -81,8 +97,8 @@ try {
     .getByRole("button", { name: "从一个问题开始", exact: true })
     .first()
     .click();
-  await editor.press("Control+z");
-  await editor.press("Control+s");
+  await editor.press("ControlOrMeta+z");
+  await editor.press("ControlOrMeta+s");
   await expect
     .poll(() => fs.readFileSync(path.join(vault, "从一个问题开始.md"), "utf8"))
     .not.toContain("UNDO_PROBE");
@@ -99,9 +115,57 @@ try {
     path: "output/playwright/inbox.png",
     fullPage: true,
   });
-  const runtime = JSON.parse(
+  let runtime = JSON.parse(
     fs.readFileSync(path.join(profile, "runtime.json"), "utf8"),
   );
+  if (!process.env.KWB_TEST_EXE) {
+    preparePlugin({
+      root: process.cwd(),
+      profileDir: profile,
+      executable: process.execPath,
+    });
+    const launch = JSON.parse(
+      fs.readFileSync(path.join(profile, "launch.json"), "utf8"),
+    );
+    expect(launch.executable).toBe(executable);
+    expect(fs.existsSync(launch.executable)).toBe(true);
+  }
+  await page.evaluate(() =>
+    window.workbench.invoke("DESKTOP", "/plugin/setup"),
+  );
+  const pluginConfig = JSON.parse(
+    fs.readFileSync(
+      path.join(
+        profile,
+        "plugin-marketplace/plugins/knowledge-workbench/.mcp.json",
+      ),
+      "utf8",
+    ),
+  );
+  const transport = pluginConfig.mcpServers["knowledge-workbench"];
+  expect(transport.command).toBe(executable);
+  const pluginClient = new Client({
+    name: "desktop-runtime-check",
+    version: "1.0.0",
+  });
+  try {
+    await pluginClient.connect(
+      new StdioClientTransport({
+        command: transport.command,
+        args: transport.args,
+        env: { ...process.env, ...transport.env },
+        stderr: "pipe",
+      }),
+    );
+    const opened = await pluginClient.callTool({
+      name: "workbench_open",
+      arguments: {},
+    });
+    expect(opened.isError).not.toBe(true);
+    expect((await pluginClient.listTools()).tools).toHaveLength(9);
+  } finally {
+    await pluginClient.close();
+  }
   const request = async (route, method = "GET", body) => {
     const response = await fetch(runtime.baseUrl + "/api" + route, {
       method,
@@ -140,7 +204,7 @@ try {
   ).toBeVisible({ timeout: 10000 });
   const reviewEditor = page.getByLabel("笔记编辑器");
   await reviewEditor.click();
-  await reviewEditor.press("Control+a");
+  await reviewEditor.press("ControlOrMeta+a");
   await page.keyboard.insertText("# 界面审核测试\n\n已人工修改，部分接受。");
   await page.getByRole("button", { name: "确认并保存", exact: true }).click();
   await expect
@@ -160,8 +224,56 @@ try {
     fullPage: true,
   });
   expect(errors).toEqual([]);
+  if (process.platform === "darwin") {
+    await page
+      .getByRole("button", { name: "从一个问题开始", exact: false })
+      .first()
+      .click();
+    await editor.click();
+    await editor.press("Meta+ArrowDown");
+    await page.keyboard.insertText("\n关闭窗口前的待保存文字。");
+    // CDP key injection does not dispatch native macOS menu accelerators.
+    await app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].close(),
+    );
+    await expect
+      .poll(() =>
+        app.evaluate(({ BrowserWindow }) =>
+          BrowserWindow.getAllWindows()[0].isVisible(),
+        ),
+      )
+      .toBe(false);
+    expect(
+      fs.readFileSync(path.join(vault, "从一个问题开始.md"), "utf8"),
+    ).toContain("关闭窗口前的待保存文字");
+    expect((await request("/status")).vault.id).toBe(runtime.vaultId);
+    await app.evaluate(({ app }) => app.emit("activate"));
+    await expect
+      .poll(() =>
+        app.evaluate(({ BrowserWindow }) =>
+          BrowserWindow.getAllWindows()[0].isVisible(),
+        ),
+      )
+      .toBe(true);
+    const permission = await app.evaluate(({ systemPreferences }) =>
+      systemPreferences.getMediaAccessStatus("screen"),
+    );
+    console.log(JSON.stringify({ screenPermission: permission }));
+    if (["denied", "restricted"].includes(permission)) {
+      const error = await page.evaluate(() =>
+        window.workbench.capture().then(
+          () => "unexpected-success",
+          (error) => error.message,
+        ),
+      );
+      expect(error).toContain("屏幕与系统音频录制");
+    }
+  }
   await app.close();
   app = undefined;
+  await expect
+    .poll(() => fs.existsSync(path.join(profile, "runtime.json")))
+    .toBe(false);
   app = await electron.launch({
     executablePath: executable,
     args: process.env.KWB_TEST_EXE ? [] : ["."],
@@ -174,6 +286,37 @@ try {
     .first()
     .click();
   await expect(reopened.getByLabel("笔记编辑器")).toContainText("中文补充");
+  runtime = JSON.parse(
+    fs.readFileSync(path.join(profile, "runtime.json"), "utf8"),
+  );
+  if (process.platform === "darwin") {
+    await reopened.evaluate(() => {
+      window.__removeFailingFlush = window.workbench.onFlush(() => {
+        throw new Error("synthetic save failure");
+      });
+    });
+    await app.evaluate(({ app, dialog }) => {
+      globalThis.__originalDialog = dialog.showMessageBox;
+      dialog.showMessageBox = async (_window, options) => {
+        globalThis.__closeWarning = options.message;
+        return { response: 0 };
+      };
+      app.quit();
+    });
+    await expect
+      .poll(() => app.evaluate(() => globalThis.__closeWarning))
+      .toContain("synthetic save failure");
+    expect((await request("/status")).vault.id).toBe(runtime.vaultId);
+    expect(
+      await app.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows()[0].isVisible(),
+      ),
+    ).toBe(true);
+    await reopened.evaluate(() => window.__removeFailingFlush());
+    await app.evaluate(({ dialog }) => {
+      dialog.showMessageBox = globalThis.__originalDialog;
+    });
+  }
   console.log(
     JSON.stringify({
       passed: true,
@@ -188,6 +331,17 @@ try {
         "capture-inbox",
         "partial-draft-acceptance",
         "restart",
+        "desktop-plugin-runtime",
+        ...(process.platform === "darwin"
+          ? [
+              "native-menu",
+              "command-shortcuts",
+              "close-keeps-service",
+              "dock-reopen",
+              "quit-stops-service",
+              "failed-save-prevents-quit",
+            ]
+          : []),
       ],
       screenshots: "output/playwright",
     }),

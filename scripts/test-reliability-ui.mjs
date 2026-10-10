@@ -21,7 +21,9 @@ const checks = [],
   errors = [];
 try {
   browser = await chromium.launch({
-    channel: process.env.KWB_TEST_BROWSER || "msedge",
+    ...(process.env.KWB_TEST_BROWSER
+      ? { channel: process.env.KWB_TEST_BROWSER }
+      : {}),
     headless: true,
   });
   const page = await browser.newPage({
@@ -251,7 +253,9 @@ try {
   });
   const reviewEditor = page.getByLabel("笔记编辑器");
   await reviewEditor.click();
-  await reviewEditor.press("Control+End");
+  await reviewEditor.press(
+    process.platform === "darwin" ? "Meta+ArrowDown" : "Control+End",
+  );
   await page.keyboard.insertText("\n离线审核的新判断");
   await all();
   await page

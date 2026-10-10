@@ -283,10 +283,12 @@ try {
   }
   const editor = writer.getByLabel("笔记编辑器");
   await editor.click();
-  await editor.press("Control+End");
+  await editor.press(
+    process.platform === "darwin" ? "Meta+ArrowDown" : "Control+End",
+  );
   await editor.press("Enter");
   await writer.keyboard.insertText("安装后补充：继续核对条件。");
-  await editor.press("Control+s");
+  await editor.press("ControlOrMeta+s");
   await expect
     .poll(() => fs.readFileSync(path.join(vault, region.path), "utf8"))
     .toContain("安装后补充");

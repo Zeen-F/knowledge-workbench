@@ -4,7 +4,16 @@ import path from "node:path";
 // Explicit traversal avoids the native Windows recursive-removal failure with
 // non-ASCII workspace paths. Never follow junctions or remove outside the test base.
 export async function removeTestDirectory(directory, base) {
-  const relative = path.relative(path.resolve(base), path.resolve(directory));
+  // macOS exposes the same temp directory through /var and /private/var.
+  // Resolve the parent, never the final entry: a final symlink is unlinked,
+  // while a parent symlink that escapes the test base must still be rejected.
+  const resolved = path.resolve(directory);
+  const canonicalBase = fs.realpathSync.native(base);
+  const canonicalDirectory = path.join(
+    fs.realpathSync.native(path.dirname(resolved)),
+    path.basename(resolved),
+  );
+  const relative = path.relative(canonicalBase, canonicalDirectory);
   if (!relative || relative.startsWith("..") || path.isAbsolute(relative))
     throw new Error("Unsafe test cleanup path");
   function remove(target) {

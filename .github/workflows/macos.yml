@@ -1,0 +1,44 @@
+name: macOS checks and preview
+on:
+  push:
+    branches: [main, "feat/**", "fix/**", "codex/**"]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm run test:mcp
+      - run: npm run test:ui
+      - run: npx playwright install chromium
+      - run: npm run test:panel
+      - run: npm run test:reliability-ui
+      - run: npm run desktop:dist:mac
+      - name: Test packaged runtime
+        shell: bash
+        run: |
+          if [[ "$(uname -m)" == arm64 ]]; then folder=mac-arm64; else folder=mac; fi
+          KWB_TEST_EXE="$PWD/release/$folder/Knowledge Workbench.app/Contents/MacOS/Knowledge Workbench" npm run test:ui
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-preview
+          path: |
+            release/*.dmg
+            release/*.zip
+            output/playwright/
+            output/reliability/
+          retention-days: 14
