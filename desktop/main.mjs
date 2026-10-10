@@ -19,8 +19,10 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { cropRect } from "./geometry.mjs";
 import { preparePlugin } from "./plugin-setup.mjs";
+import { createCredentials } from "./credentials.mjs";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const credentials = createCredentials(safeStorage);
 const profileDir = path.resolve(
   process.env.KWB_PROFILE || path.join(os.homedir(), ".knowledge-workbench"),
 );
@@ -115,18 +117,18 @@ async function start(vaultDir) {
             port: preferredPort,
             dataDir: profileDir,
             distDir: path.join(root, "dist"),
-            secureStorage: safeStorage.isEncryptionAvailable(),
+            // Availability is checked only when the user requests credentials.
+            // A Keychain prompt must not block startup before a window exists.
+            secureStorage: true,
           },
         });
       }
       if (data.type === "crypto") {
         try {
-          if (!safeStorage.isEncryptionAvailable())
-            throw new Error("系统加密暂不可用，密钥未保存");
           const value =
             data.action === "encrypt"
-              ? safeStorage.encryptString(data.value).toString("base64")
-              : safeStorage.decryptString(Buffer.from(data.value, "base64"));
+              ? credentials.encrypt(data.value)
+              : credentials.decrypt(data.value);
           child.postMessage({ type: "crypto-result", id: data.id, value });
         } catch (error) {
           child.postMessage({

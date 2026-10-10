@@ -32,6 +32,8 @@ Apple 公证需要开发者计划的权限、带私钥的 Developer ID Applicati
 
 用户配置、索引和队列默认放在 `~/.knowledge-workbench/`，正文和附件继续在用户选择的库内。不将 Windows 的本机运行配置或加密密钥搬到 Mac；模型设置在本机重新填写。iCloud 的完整下载与两机轮流编辑另行验收。
 
+启动与普通笔记操作不访问钥匙串；实际保存或读取模型密钥时才检查系统加密，并可能出现 macOS 授权提示。加密不可用时拒绝该操作，不退回明文。预览版更换签名后，系统可能要求重新确认钥匙串访问，详见 [Electron safeStorage 说明](https://www.electronjs.org/docs/latest/api/safe-storage/)。
+
 ## Codex 插件
 
 桌面“设置 → 准备本地插件”生成本机路径，再按界面命令安装。建议先把应用放到固定位置，再准备插件；移动 `.app` 后重新准备，避免启动配置指向旧位置。开发运行也支持 `npm run plugin:setup`。
