@@ -19,18 +19,27 @@ const executable =
   process.env.KWB_TEST_EXE || createRequire(import.meta.url)("electron");
 let app;
 const errors = [];
+let stage = "launch";
+const checkpoint = (name) => {
+  stage = name;
+  console.log(JSON.stringify({ desktopTestStage: stage }));
+};
 try {
+  checkpoint("launch");
   app = await electron.launch({
     executablePath: executable,
     args: process.env.KWB_TEST_EXE ? [] : ["."],
     env,
     timeout: 30000,
   });
+  app.context().setDefaultTimeout(15000);
+  app.context().setDefaultNavigationTimeout(30000);
   app.process().stderr.on("data", (bytes) => {
     if (/Error|Exception/.test(bytes.toString())) process.stderr.write(bytes);
   });
   const page = await app.firstWindow();
   page.on("pageerror", (error) => errors.push(error.message));
+  checkpoint("editor-and-themes");
   await page
     .getByRole("button", { name: "从一个问题开始", exact: false })
     .first()
@@ -60,6 +69,7 @@ try {
     path.join(vault, "从一个问题开始.md"),
     "utf8",
   );
+  checkpoint("editing-and-undo");
   await page.getByRole("button", { name: "即时渲染", exact: true }).click();
   await page.getByRole("button", { name: "源码", exact: true }).click();
   expect(fs.readFileSync(path.join(vault, "从一个问题开始.md"), "utf8")).toBe(
@@ -118,6 +128,7 @@ try {
   let runtime = JSON.parse(
     fs.readFileSync(path.join(profile, "runtime.json"), "utf8"),
   );
+  checkpoint("plugin-runtime");
   if (!process.env.KWB_TEST_EXE) {
     preparePlugin({
       root: process.cwd(),
@@ -195,6 +206,7 @@ try {
       unresolved: ["人工核对条件"],
     },
   });
+  checkpoint("draft-review");
   await page
     .getByRole("button", { name: /待审稿/ })
     .first()
@@ -225,6 +237,7 @@ try {
   });
   expect(errors).toEqual([]);
   if (process.platform === "darwin") {
+    checkpoint("close-and-reopen-window");
     await page
       .getByRole("button", { name: "从一个问题开始", exact: false })
       .first()
@@ -269,6 +282,7 @@ try {
       expect(error).toContain("屏幕与系统音频录制");
     }
   }
+  checkpoint("quit-and-restart");
   await app.close();
   app = undefined;
   await expect
@@ -280,6 +294,8 @@ try {
     env,
     timeout: 30000,
   });
+  app.context().setDefaultTimeout(15000);
+  app.context().setDefaultNavigationTimeout(30000);
   const reopened = await app.firstWindow();
   await reopened
     .getByRole("button", { name: "从一个问题开始", exact: false })
@@ -290,6 +306,7 @@ try {
     fs.readFileSync(path.join(profile, "runtime.json"), "utf8"),
   );
   if (process.platform === "darwin") {
+    checkpoint("failed-save-prevents-quit");
     await reopened.evaluate(() => {
       window.__removeFailingFlush = window.workbench.onFlush(() => {
         throw new Error("synthetic save failure");
@@ -317,6 +334,7 @@ try {
       dialog.showMessageBox = globalThis.__originalDialog;
     });
   }
+  checkpoint("completed");
   console.log(
     JSON.stringify({
       passed: true,
@@ -346,7 +364,19 @@ try {
       screenshots: "output/playwright",
     }),
   );
+} catch (error) {
+  console.error(`Desktop test failed during ${stage}:`, error);
+  const page = app?.windows()[0];
+  if (page)
+    await page
+      .screenshot({
+        path: "output/playwright/desktop-failure.png",
+        timeout: 5000,
+      })
+      .catch(() => {});
+  throw error;
 } finally {
+  checkpoint("cleanup");
   if (app) await app.close();
   fs.rmSync(testRoot, { recursive: true, force: true });
 }

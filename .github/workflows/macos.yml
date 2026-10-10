@@ -23,11 +23,13 @@ jobs:
       - run: npm run check
       - run: npm run test:mcp
       - run: npm run test:ui
+        timeout-minutes: 3
       - run: npx playwright install chromium
       - run: npm run test:panel
       - run: npm run test:reliability-ui
       - run: npm run desktop:dist:mac
       - name: Test packaged runtime
+        timeout-minutes: 3
         shell: bash
         run: |
           if [[ "$(uname -m)" == arm64 ]]; then folder=mac-arm64; else folder=mac; fi

@@ -15,6 +15,14 @@ npm run desktop:dist:mac
 
 将整个 `.app` 放入 Applications 或 `~/Applications`，再打开；不要单独复制内部可执行文件。当前使用本地 ad-hoc 签名，未配置 Developer ID 或 Apple 公证。下载后的系统验证与本地构建启动分别验收。
 
+## 正式签名与公证
+
+Apple 公证需要开发者计划的权限、带私钥的 Developer ID Application 签名身份及公证凭据。免费账号与本地 ad-hoc 签名不能替代这些前提；凭据应放入钥匙串或专用密钥存储，不进入源码。
+
+具备凭据后，需启用 Hardened Runtime、使用 Developer ID 重新签名并构建，再向 Apple 提交。只有收到 Accepted、附加并验证公证票据、通过 Gatekeeper 检查，以及对最终签名成品重做桌面和插件验收后，才标记为已公证。当前预览构建仍关闭公证；生成 DMG 或本地签名验证通过不代表完成公证。
+
+依据：[Apple Developer ID 证书](https://developer.apple.com/help/account/certificates/create-developer-id-certificates/)、[Apple 公证要求](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)。
+
 ## Mac 操作
 
 - 使用 ⌘S 保存、⌘N 新建、⌘Z 撤销；复制、粘贴、全选等也使用 Command。
