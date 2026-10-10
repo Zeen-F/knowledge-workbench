@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { requirePanelFeatures } from "../shared/recovery.ts";
 
 export const PANEL_RESOURCE = "ui://knowledge-workbench/panel-v1.html";
 const mimeType = "text/html;profile=mcp-app";
@@ -11,10 +12,10 @@ const appOnly = {
   "openai/widgetAccessible": true,
 };
 const routes: Record<string, RegExp> = {
-  GET: /^\/(status|notes|note|history|relations|captures|jobs|proposals|settings|assets|paperdesk\/source)(?:\?[^#]*)?$/,
+  GET: /^\/(status|recovery|notes|note|history|relations|captures|jobs|proposals|settings|assets|paperdesk\/source)(?:\?[^#]*)?$/,
   POST: /^\/(refresh|notes|note\/move|history\/restore|assets|captures|jobs|jobs\/[a-f0-9-]+\/(run|pause|share)|proposals\/[a-f0-9-]+\/(accept|reject|rebase))$/,
-  PUT: /^\/(note|draft|settings\/(paperdesk|appearance)|proposals\/[a-f0-9-]+)$/,
-  DELETE: /^\/draft$/,
+  PUT: /^\/(recovery|note|draft|settings\/(paperdesk|appearance)|proposals\/[a-f0-9-]+)$/,
+  DELETE: /^\/(draft|recovery)$/,
 };
 
 // This is a component-only bridge, never a model tool for arbitrary file access.
@@ -82,7 +83,18 @@ export function registerPanel(
         new Error("知识库连接已变化，请保存本地草稿后重新打开面板。"),
         { code: "VAULT_CHANGED", status: 409 },
       );
-    if (route === "/status") return status;
+    if (route === "/status")
+      return {
+        ...status,
+        capabilities: {
+          ...status.capabilities,
+          capture: false,
+          chooseVault: false,
+          plugin: false,
+          secureCredentials: false,
+        },
+      };
+    requirePanelFeatures(status);
     const response = await fetchLocal(route, method, body);
     if (method === "GET" && route.startsWith("/assets?") && response.ok) {
       const mime = response.headers.get("content-type")?.split(";")[0];

@@ -4,6 +4,9 @@
 }
 .native-panel #root > [role="alert"] {
   padding: 24px;
+  margin: 24px auto;
+  max-width: 620px;
+  line-height: 1.7;
 }
 @media (max-width: 680px) {
   .native-panel .sidebar {

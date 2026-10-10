@@ -2,6 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import { once } from "node:events";
 import { chromium, expect } from "@playwright/test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -12,7 +14,16 @@ import { removeTestDirectory } from "./test-cleanup.mjs";
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kwb-native-panel-"));
 const vault = path.join(root, "中文 测试库");
 seed(vault);
-const service = await startService({ vaultDir: vault, dataDir: root });
+const service = await startService({
+  vaultDir: vault,
+  dataDir: root,
+  desktop: async () => {
+    throw new Error("Panel must not invoke desktop actions");
+  },
+  secureStorage: true,
+  encrypt: async (s) => s,
+  decrypt: async (s) => s,
+});
 fs.writeFileSync(
   path.join(root, "runtime.json"),
   JSON.stringify({
@@ -28,6 +39,11 @@ fs.mkdirSync(evidence, { recursive: true });
 const errors = [],
   requests = [],
   messages = [];
+let dropCaptureAck = false,
+  failRecovery = false,
+  failReviewSave = false;
+let holdCapture = false,
+  releaseCapture;
 try {
   await client.connect(
     new StdioClientTransport({
@@ -80,6 +96,14 @@ try {
         },
       };
     if (message.method === "tools/call") {
+      const args = message.params.arguments;
+      if (
+        (failRecovery && args.route === "/recovery" && args.method === "PUT") ||
+        (failReviewSave &&
+          args.route?.startsWith("/proposals/") &&
+          args.method === "PUT")
+      )
+        throw new Error("synthetic offline");
       const result = await client.callTool(message.params);
       // No local note content in public tool output, including error details.
       if (message.params.name.startsWith("workbench_panel_")) {
@@ -87,8 +111,18 @@ try {
           !JSON.stringify({
             content: result.content,
             structuredContent: result.structuredContent,
-          }).includes("合成材料"),
+          }).match(/合成材料|面板恢复想法|断线恢复想法/),
         );
+      }
+      if (args.route === "/captures" && args.method === "POST") {
+        if (dropCaptureAck) {
+          dropCaptureAck = false;
+          throw new Error("synthetic lost receipt");
+        }
+        if (holdCapture)
+          await new Promise((r) => {
+            releaseCapture = r;
+          });
       }
       return result;
     }
@@ -139,6 +173,36 @@ try {
     }, html);
   await load();
   const frame = page.frameLocator("#panel");
+  const teardown = () =>
+    page.evaluate(
+      () =>
+        new Promise((resolve, reject) => {
+          const child = document.querySelector("iframe").contentWindow;
+          const timer = setTimeout(() => {
+            window.removeEventListener("message", receive);
+            reject(new Error("teardown timeout"));
+          }, 10000);
+          function receive(event) {
+            if (event.source !== child || event.data?.id !== "test-teardown")
+              return;
+            clearTimeout(timer);
+            window.removeEventListener("message", receive);
+            event.data.error
+              ? reject(new Error(event.data.error.message))
+              : resolve();
+          }
+          window.addEventListener("message", receive);
+          child.postMessage(
+            {
+              jsonrpc: "2.0",
+              id: "test-teardown",
+              method: "ui/resource-teardown",
+              params: {},
+            },
+            "*",
+          );
+        }),
+    );
   await frame
     .getByRole("button", { name: "从一个问题开始", exact: false })
     .first()
@@ -168,6 +232,69 @@ try {
     .first()
     .click();
   await expect(frame.locator(".capture-card img")).toBeVisible();
+  await expect(frame.getByRole("button", { name: /框选截图/ })).toBeDisabled();
+  await expect(frame.locator(".vault-switch")).toBeDisabled();
+  const thought = frame.getByLabel("快速记录想法");
+  const inbox = () =>
+    frame
+      .getByRole("button", { name: /^收集箱/ })
+      .first()
+      .click();
+  await thought.fill("面板恢复想法");
+  await expect(
+    frame.getByText("已保留本机恢复草稿，尚未写入知识库", { exact: true }),
+  ).toBeVisible();
+  await load();
+  await inbox();
+  await expect(thought).toHaveValue("面板恢复想法");
+  const captureCount = service.captures.list().length;
+  dropCaptureAck = true;
+  await frame.getByRole("button", { name: "保存想法", exact: true }).click();
+  await expect(
+    frame.getByText("保存失败，输入已保留；可重试", { exact: true }),
+  ).toBeVisible();
+  await frame.getByRole("button", { name: "保存想法", exact: true }).click();
+  await expect(thought).toHaveValue("");
+  assert.equal(service.captures.list().length, captureCount + 1);
+  await thought.fill("旧回执对应输入");
+  holdCapture = true;
+  await frame.getByRole("button", { name: "保存想法", exact: true }).click();
+  await expect.poll(() => Boolean(releaseCapture)).toBe(true);
+  await thought.fill("保存期间新增输入");
+  holdCapture = false;
+  releaseCapture();
+  await expect(thought).toHaveValue("保存期间新增输入");
+  await expect
+    .poll(() => service.captures.list().length)
+    .toBe(captureCount + 2);
+  await expect
+    .poll(async () => {
+      const r = await client.callTool({
+        name: "workbench_panel_read",
+        arguments: { route: "/recovery", vaultId: service.vaultId },
+      });
+      return r._meta.panel.data.records.find((s) => s.record.kind === "inbox")
+        ?.record.value.thought;
+    })
+    .toBe("保存期间新增输入");
+  failRecovery = true;
+  await thought.fill("断线恢复想法");
+  await expect(
+    frame.getByRole("button", { name: "重试恢复草稿" }),
+  ).toBeVisible();
+  await assert.rejects(teardown, /synthetic offline/);
+  await expect(thought).toHaveValue("断线恢复想法");
+  failRecovery = false;
+  await frame.getByRole("button", { name: "重试恢复草稿" }).click();
+  await expect(
+    frame.getByText("已保留本机恢复草稿，尚未写入知识库", { exact: true }),
+  ).toBeVisible();
+  await page.screenshot({ path: path.join(evidence, "inbox-recovery.png") });
+  await load();
+  await inbox();
+  await expect(thought).toHaveValue("断线恢复想法");
+  await frame.getByRole("button", { name: "保存想法", exact: true }).click();
+  await expect(thought).toHaveValue("");
   await expect(frame.locator(".capture-card img")).toHaveAttribute(
     "src",
     /^blob:/,
@@ -219,7 +346,28 @@ try {
   ).toBeVisible();
   await frame.getByLabel("笔记编辑器").click();
   await frame.getByLabel("笔记编辑器").press("Control+a");
+  failReviewSave = true;
   await page.keyboard.insertText("# 已审核\n\n用户修改后接受，仍需核对。");
+  await expect
+    .poll(async () => {
+      const r = await client.callTool({
+        name: "workbench_panel_read",
+        arguments: { route: "/recovery", vaultId: service.vaultId },
+      });
+      return r._meta.panel.data.records.some(
+        (s) =>
+          s.record.kind === "review" &&
+          s.record.value.text.includes("用户修改后接受"),
+      );
+    })
+    .toBe(true);
+  await load();
+  await frame
+    .getByRole("button", { name: /^待审稿/ })
+    .first()
+    .click();
+  await expect(frame.getByLabel("笔记编辑器")).toContainText("用户修改后接受");
+  failReviewSave = false;
   await frame.getByRole("button", { name: "确认并保存", exact: true }).click();
   await expect
     .poll(
@@ -237,35 +385,7 @@ try {
   await editor.click();
   await editor.press("Control+End");
   await page.keyboard.insertText("\n关闭面板前保存验证");
-  await page.evaluate(
-    () =>
-      new Promise((resolve, reject) => {
-        const child = document.querySelector("iframe").contentWindow;
-        const timer = setTimeout(() => {
-          window.removeEventListener("message", receive);
-          reject(new Error("teardown timeout"));
-        }, 10000);
-        function receive(event) {
-          if (event.source !== child || event.data?.id !== "test-teardown")
-            return;
-          clearTimeout(timer);
-          window.removeEventListener("message", receive);
-          event.data.error
-            ? reject(new Error(event.data.error.message))
-            : resolve();
-        }
-        window.addEventListener("message", receive);
-        child.postMessage(
-          {
-            jsonrpc: "2.0",
-            id: "test-teardown",
-            method: "ui/resource-teardown",
-            params: {},
-          },
-          "*",
-        );
-      }),
-  );
+  await teardown();
   assert.ok(
     fs
       .readFileSync(path.join(vault, "从一个问题开始.md"), "utf8")
@@ -310,6 +430,46 @@ try {
   });
   assert.equal(changed._meta.panel.code, "VAULT_CHANGED");
   fs.writeFileSync(runtimePath, runtime);
+  let legacyWrites = 0;
+  const legacy = createServer((req, res) => {
+    if (req.url !== "/api/status") legacyWrites++;
+    res.setHeader("Content-Type", "application/json");
+    res.end(
+      JSON.stringify({
+        service: "knowledge-workbench",
+        apiVersion: 1,
+        vault: { id: service.vaultId },
+      }),
+    );
+  });
+  legacy.listen(0, "127.0.0.1");
+  await once(legacy, "listening");
+  try {
+    fs.writeFileSync(
+      runtimePath,
+      JSON.stringify({
+        ...JSON.parse(runtime),
+        baseUrl: `http://127.0.0.1:${legacy.address().port}`,
+      }),
+    );
+    const unsupported = await client.callTool({
+      name: "workbench_panel_write",
+      arguments: {
+        route: "/captures",
+        method: "POST",
+        vaultId: service.vaultId,
+        body: { title: "must not write" },
+      },
+    });
+    assert.equal(unsupported._meta.panel.code, "SERVICE_UPGRADE_REQUIRED");
+    await load();
+    await expect(frame.getByRole("alert")).toContainText("桌面服务版本较旧");
+    assert.equal(legacyWrites, 0);
+    await page.screenshot({ path: path.join(evidence, "service-upgrade.png") });
+  } finally {
+    fs.writeFileSync(runtimePath, runtime);
+    await new Promise((r) => legacy.close(r));
+  }
   assert.deepEqual(errors, []);
   assert.deepEqual(requests, []);
   const result = {
@@ -327,6 +487,14 @@ try {
       "review-accept",
       "version-conflict",
       "vault-pinning",
+      "opaque-inbox-reload-recovery",
+      "capture-lost-receipt-deduplication",
+      "new-input-survives-old-receipt",
+      "offline-recovery-retry",
+      "failed-teardown-keeps-panel",
+      "opaque-review-reload-recovery",
+      "panel-capability-restrictions",
+      "legacy-service-upgrade-without-write",
     ],
     host: "browser protocol harness; not Codex desktop UI",
     modelInvoked: false,

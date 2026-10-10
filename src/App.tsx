@@ -47,6 +47,7 @@ import {
 } from "./client";
 import { Editor, type EditorHandle } from "./Editor";
 import { Diff, Inbox, Modal, Review, Settings } from "./Panels";
+import { assetUrl } from "./markdown";
 
 type Tab = {
   note: Note;
@@ -86,6 +87,7 @@ export default function App() {
     [movePath, setMovePath] = useState(""),
     [movePreview, setMovePreview] = useState<any>(null),
     [relations, setRelations] = useState<any>(null);
+  const [attachment, setAttachment] = useState<any>(null);
   const [, draw] = useState(0),
     tabs = useRef<Record<string, Tab>>({}),
     saves = useRef<Partial<Record<string, Promise<void>>>>({}),
@@ -96,6 +98,12 @@ export default function App() {
     activeRef = useRef(active),
     statusRef = useRef(status),
     toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const openGeneration = useRef(0),
+    refreshGeneration = useRef(0);
+  function navigate(next: View) {
+    openGeneration.current++;
+    setView(next);
+  }
   activeRef.current = active;
   statusRef.current = status;
   const render = () => draw((n) => n + 1);
@@ -135,7 +143,9 @@ export default function App() {
     }
   };
   async function refresh() {
+    const generation = ++refreshGeneration.current;
     const next = await api("GET", "/status");
+    if (generation !== refreshGeneration.current) return;
     setStatus(next);
     statusRef.current = next;
     document.documentElement.dataset.theme = next.theme || "forest";
@@ -146,6 +156,7 @@ export default function App() {
       api<Job[]>("GET", "/jobs"),
       api<Proposal[]>("GET", "/proposals"),
     ]);
+    if (generation !== refreshGeneration.current) return;
     setNotes(n);
     setCaptures(c);
     setJobs(j);
@@ -155,10 +166,20 @@ export default function App() {
         latest = n.find((x) => x.path === path);
       if (!latest || latest.hash === tab.hash || saves.current[path]) continue;
       try {
+        const version = tab.generation,
+          hash = tab.hash;
         const remote = await api<Note>(
           "GET",
           "/note?path=" + encodeURIComponent(path),
         );
+        if (
+          generation !== refreshGeneration.current ||
+          tabs.current[path] !== tab ||
+          tab.generation !== version ||
+          tab.hash !== hash ||
+          saves.current[path]
+        )
+          continue;
         if (!tab.dirty) {
           tab.note = remote;
           tab.content =
@@ -177,6 +198,7 @@ export default function App() {
     }
   }
   async function openNote(path: string) {
+    const generation = ++openGeneration.current;
     try {
       if (!tabs.current[path]) {
         const note = await api<Note>(
@@ -185,6 +207,7 @@ export default function App() {
           ),
           original =
             note.owner === "paperdesk" ? note.body || "" : note.content;
+        if (generation !== openGeneration.current) return;
         let draft = note.draft;
         try {
           const stored = localStorage.getItem(localKey(path));
@@ -221,7 +244,8 @@ export default function App() {
       setResults(null);
       render();
     } catch (e) {
-      notify((e as Error).message, true);
+      if (generation === openGeneration.current)
+        notify((e as Error).message, true);
     }
   }
   function change(path: string, content: string) {
@@ -347,20 +371,38 @@ export default function App() {
     };
   }, []);
   useEffect(() => {
+    let current = true;
+    setResults(null);
     const timer = setTimeout(() => {
       if (query.trim())
         void api<NoteSummary[]>("GET", "/notes?q=" + encodeURIComponent(query))
-          .then(setResults)
-          .catch((e) => notify(e.message, true));
+          .then((r) => {
+            if (current) setResults(r);
+          })
+          .catch((e) => {
+            if (current) notify(e.message, true);
+          });
       else setResults(null);
     }, 200);
-    return () => clearTimeout(timer);
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
   }, [query]);
   useEffect(() => {
+    let current = true;
+    setRelations(null);
     if (active)
       void api("GET", "/relations?path=" + encodeURIComponent(active))
-        .then(setRelations)
-        .catch(() => setRelations(null));
+        .then((r) => {
+          if (current) setRelations(r);
+        })
+        .catch(() => {
+          if (current) setRelations(null);
+        });
+    return () => {
+      current = false;
+    };
   }, [active, notes]);
   async function addNote() {
     try {
@@ -544,6 +586,12 @@ export default function App() {
         </div>
         <button
           className="vault-switch"
+          disabled={!status?.capabilities?.chooseVault}
+          title={
+            status?.capabilities?.chooseVault
+              ? "选择知识库"
+              : "此浏览器服务已固定知识库，请在桌面应用选库"
+          }
           onClick={() => {
             if (window.workbench)
               void flushAll()
@@ -576,7 +624,8 @@ export default function App() {
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
-              if (["inbox", "review"].includes(view)) setView("all");
+              openGeneration.current++;
+              if (["inbox", "review"].includes(view)) navigate("all");
             }}
           />
           <kbd>⌕</kbd>
@@ -587,7 +636,7 @@ export default function App() {
               key={s.key}
               className={view === s.key ? "active" : ""}
               onClick={() => {
-                setView(s.key as View);
+                navigate(s.key as View);
                 setQuery("");
               }}
             >
@@ -719,6 +768,9 @@ export default function App() {
           </div>
         ) : view === "inbox" ? (
           <Inbox
+            key={status.vault.id}
+            vaultId={status.vault.id}
+            capabilities={status.capabilities || {}}
             captures={captures}
             notes={notes}
             jobs={jobs}
@@ -728,6 +780,8 @@ export default function App() {
           />
         ) : view === "review" ? (
           <Review
+            key={status.vault.id}
+            vaultId={status.vault.id}
             proposals={proposals}
             jobs={jobs}
             onOpen={(p) => void openNote(p)}
@@ -739,7 +793,12 @@ export default function App() {
             <div className="tab-strip">
               {tabOrder.map((p) => (
                 <div key={p} className={active === p ? "active" : ""}>
-                  <button onClick={() => setActive(p)}>
+                  <button
+                    onClick={() => {
+                      openGeneration.current++;
+                      setActive(p);
+                    }}
+                  >
                     <FileText size={13} />
                     <span>{tabs.current[p]?.note.title}</span>
                     {tabs.current[p]?.dirty && <b>•</b>}
@@ -779,7 +838,7 @@ export default function App() {
                     <span>把理解和条件写清楚</span>
                     <ArrowUpRight size={17} />
                   </button>
-                  <button onClick={() => setView("inbox")}>
+                  <button onClick={() => navigate("inbox")}>
                     <InboxIcon size={25} strokeWidth={1.4} />
                     <strong>整理手边的材料</strong>
                     <span>先收集，再连接</span>
@@ -1014,14 +1073,21 @@ export default function App() {
                             <button
                               key={i}
                               className="related-link"
+                              title={
+                                link.sha256
+                                  ? `SHA-256: ${link.sha256}`
+                                  : link.to_ref
+                              }
                               onClick={() =>
-                                followLink(
-                                  link.to_ref.replace(/^\[\[|\]\]$/g, ""),
-                                )
+                                link.kind === "asset"
+                                  ? setAttachment(link)
+                                  : followLink(
+                                      link.to_ref.replace(/^\[\[|\]\]$/g, ""),
+                                    )
                               }
                             >
                               <Link2 size={12} />
-                              {link.to_ref.replace(/^\[\[|\]\]$/g, "")}
+                              {link.label || link.to_ref}
                             </button>
                           ))
                       ) : (
@@ -1115,10 +1181,23 @@ export default function App() {
       )}
       {settings && (
         <Settings
+          capabilities={status?.capabilities || {}}
           onClose={() => setSettings(false)}
           refresh={refresh}
           notify={notify}
         />
+      )}
+      {attachment && (
+        <Modal title={attachment.label} onClose={() => setAttachment(null)}>
+          <img
+            src={assetUrl(attachment.assetPath)}
+            alt={attachment.label}
+            style={{ maxWidth: "100%" }}
+          />
+          <p style={{ overflowWrap: "anywhere" }}>
+            SHA-256: {attachment.sha256}
+          </p>
+        </Modal>
       )}
       {create && (
         <Modal title="写一篇新笔记" onClose={() => setCreate(false)}>

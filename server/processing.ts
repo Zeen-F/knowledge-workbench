@@ -18,6 +18,7 @@ import type { Captures } from "./capture.ts";
 
 export class Processing {
   running = new Map<string, AbortController>();
+  accepting = new Set<string>();
   constructor(
     public vault: Vault,
     public captures: Captures,
@@ -125,19 +126,22 @@ export class Processing {
       throw new AppError("此任务已交给 Codex，请在对话中继续");
     if (this.running.has(id)) return this.get(id);
     if (["completed", "review"].includes(job.state)) return job;
-    const provider = await this.getProvider(),
-      controller = new AbortController();
+    const controller = new AbortController();
     this.running.set(id, controller);
     this.vault.db
       .prepare("UPDATE jobs SET state='running',error=NULL WHERE id=?")
       .run(id);
-    void this.execute(job, provider, controller).finally(() =>
-      this.running.delete(id),
-    );
+    void this.execute(job, controller).finally(() => this.running.delete(id));
     return this.get(id);
   }
-  async execute(job: Job, provider: Provider, controller: AbortController) {
+  async execute(job: Job, controller: AbortController) {
     try {
+      let provider: Provider | undefined;
+      const configured = async () => {
+        provider ||= await this.getProvider();
+        if (controller.signal.aborted) throw new Error("已暂停");
+        return provider;
+      };
       for (const item of job.snapshot.sources) {
         if (controller.signal.aborted) throw new Error("已暂停");
         const cached = job.items.find((i) => i.sourceId === item.id);
@@ -156,7 +160,7 @@ export class Processing {
             ]
           : [];
         const output = await callProvider(
-          provider,
+          await configured(),
           `逐项整理这份材料，分为【原文可见内容】【公式与符号】【用户想法】【AI 推断】【待核对】。保留实际页码，模糊内容标记，不补造。材料 ID：${item.id}\n来源：${JSON.stringify(item.ref)}\n记录：${item.text}`,
           images,
           controller.signal,
@@ -189,38 +193,111 @@ export class Processing {
       if (controller.signal.aborted) throw new Error("已暂停");
       const done = this.get(job.id);
       const prompt = `把材料整理为少量主题知识卡与一篇学习记录。仅返回 JSON：{"drafts":[{"title":"标题","action":"create或amend","noteType":"concept或learning-log","markdown":"完整Markdown正文","sourceIds":["真实材料UUID"],"unresolved":["疑点"]}]}。amend 仅允许所提供参考笔记，必须附 targetPath 与 baseHash 原值；保留原有 YAML 属性、用户想法、来源及未解决问题。区分原始信息与推断，不声称已经验证。新稿用 create。每份至少一个真实来源。\n用户要求：${job.snapshot.instruction}\n逐项提取：${JSON.stringify(done.items)}\n材料来源：${JSON.stringify(job.snapshot.sources.map((s) => ({ id: s.id, ref: s.ref })))}\n参考笔记：${JSON.stringify(job.snapshot.references)}`;
-      const raw = await callProvider(provider, prompt, [], controller.signal);
-      atomicWrite(
-        this.vault.dataDir + `/responses/${job.id}.json`,
-        JSON.stringify({ raw, savedAt: now() }),
+      const responseFile = path.join(
+        this.vault.dataDir,
+        "responses",
+        job.id + ".json",
       );
-      let parsed: any;
-      try {
-        parsed = JSON.parse(
+      const commitFile = path.join(
+        this.vault.dataDir,
+        "responses",
+        job.id + ".commit.json",
+      );
+      const parse = (raw: string) => {
+        const parsed = JSON.parse(
           raw.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, ""),
         );
-      } catch {
-        throw new AppError(
-          "模型结果格式不正确，原始返回已保留，可重试汇总",
-          502,
-        );
+        if (
+          !Array.isArray(parsed.drafts) ||
+          !parsed.drafts.length ||
+          parsed.drafts.length > 20
+        )
+          throw new AppError("模型草稿数量无效", 502);
+        return parsed.drafts.map((d: unknown) =>
+          this.validateProposal(job, d),
+        ) as DraftProposal[];
+      };
+      let checkpoint:
+        | {
+            inputHash: string;
+            drafts: DraftProposal[];
+            hash: string;
+            committed: string[];
+          }
+        | undefined;
+      if (fs.existsSync(commitFile)) {
+        checkpoint = JSON.parse(readUtf8(commitFile));
+        if (
+          !checkpoint ||
+          checkpoint.inputHash !== job.snapshot.inputHash ||
+          checkpoint.hash !== digest(JSON.stringify(checkpoint.drafts))
+        )
+          throw new AppError("汇总恢复记录校验失败，已停止以保留原结果", 409);
+        checkpoint.drafts.forEach((d) => this.validateProposal(job, d));
+      } else {
+        let drafts: DraftProposal[] | undefined;
+        if (fs.existsSync(responseFile)) {
+          const saved = JSON.parse(readUtf8(responseFile));
+          if (saved.inputHash && saved.inputHash !== job.snapshot.inputHash)
+            throw new AppError("汇总快照不匹配", 409);
+          try {
+            drafts = parse(saved.raw);
+          } catch {
+            /* Invalid model output may be regenerated before any commit. */
+          }
+        }
+        if (!drafts) {
+          if (
+            this.vault.db
+              .prepare("SELECT id FROM proposals WHERE job_id=?")
+              .get(job.id)
+          )
+            throw new AppError(
+              "已有草稿但汇总恢复记录不可用，请核对原结果；不会重新生成",
+              409,
+            );
+          const raw = await callProvider(
+            await configured(),
+            prompt,
+            [],
+            controller.signal,
+          );
+          atomicWrite(
+            responseFile,
+            JSON.stringify({
+              raw,
+              inputHash: job.snapshot.inputHash,
+              savedAt: now(),
+            }),
+          );
+          try {
+            drafts = parse(raw);
+          } catch {
+            throw new AppError(
+              "模型结果格式不正确，原始返回已保留，可重试汇总",
+              502,
+            );
+          }
+        }
+        checkpoint = {
+          inputHash: job.snapshot.inputHash,
+          drafts,
+          hash: digest(JSON.stringify(drafts)),
+          committed: [],
+        };
+        atomicWrite(commitFile, JSON.stringify(checkpoint));
       }
-      if (
-        !Array.isArray(parsed.drafts) ||
-        !parsed.drafts.length ||
-        parsed.drafts.length > 20
-      )
-        throw new AppError("模型草稿数量无效", 502);
-      const drafts = parsed.drafts.map((d: unknown) =>
-        this.validateProposal(job, d),
-      );
-      for (let index = 0; index < drafts.length; index++)
-        this.submit(
+      for (let index = 0; index < checkpoint.drafts.length; index++) {
+        if (controller.signal.aborted) throw new Error("已暂停");
+        const p = this.submit(
           job.id,
           `${job.id}:api:${index}`,
-          drafts[index],
+          checkpoint.drafts[index],
           job.snapshot.inputHash,
         );
+        checkpoint.committed[index] = p.id;
+        atomicWrite(commitFile, JSON.stringify(checkpoint));
+      }
       this.vault.db
         .prepare("UPDATE jobs SET state='review',error=NULL WHERE id=?")
         .run(job.id);
@@ -242,6 +319,7 @@ export class Processing {
   }
   validateProposal(job: Job, input: unknown) {
     const proposal = draftProposalSchema.parse(input);
+    parseMarkdown(proposal.markdown);
     if (
       proposal.sourceIds.some(
         (id) => !job.snapshot.sources.some((s) => s.id === id),
@@ -275,32 +353,44 @@ export class Processing {
         throw new AppError("请求标识已用于不同草稿", 409);
       return this.proposal(prior);
     }
-    const id = randomUUID(),
+    // Stable identity survives a process exit between the file write and SQLite insertion.
+    const hex = digest(jobId + ":" + requestId),
+      id = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`,
       relative = `${MANAGED}/Drafts/${slug(proposal.title)}--${id.slice(0, 8)}.md`;
-    atomicWrite(
-      this.vault.absolute(relative),
-      formatMarkdown(
-        {
-          title: proposal.title,
-          note_type: proposal.noteType,
-          status: "working",
-          kb_id: id,
-          kb_review_state: "pending",
-          kb_proposal: {
-            jobId,
-            requestId,
-            inputHash,
-            ...proposal,
-            markdown: undefined,
-          },
-          kb_source_paths: proposal.sourceIds.map(
-            (id) => job.snapshot.sources.find((s) => s.id === id)!.path,
-          ),
-        },
-        proposal.markdown,
-      ),
-      true,
+    const submissionFile = path.join(
+      this.vault.dataDir,
+      "submissions",
+      id + ".json",
     );
+    const submission = { id, jobId, requestId, inputHash, proposal };
+    if (fs.existsSync(submissionFile)) {
+      if (readUtf8(submissionFile) !== JSON.stringify(submission))
+        throw new AppError("请求标识已用于不同草稿", 409);
+    } else atomicWrite(submissionFile, JSON.stringify(submission));
+    const content = formatMarkdown(
+      {
+        title: proposal.title,
+        note_type: proposal.noteType,
+        status: "working",
+        kb_id: id,
+        kb_review_state: "pending",
+        kb_proposal: {
+          jobId,
+          requestId,
+          inputHash,
+          ...proposal,
+          markdown: undefined,
+        },
+        kb_source_paths: proposal.sourceIds.map(
+          (id) => job.snapshot.sources.find((s) => s.id === id)!.path,
+        ),
+      },
+      proposal.markdown,
+    );
+    if (fs.existsSync(this.vault.absolute(relative))) {
+      if (readUtf8(this.vault.absolute(relative)) !== content)
+        throw new AppError("已落盘草稿内容与恢复记录不同，请核对后继续", 409);
+    } else atomicWrite(this.vault.absolute(relative), content, true);
     this.vault.db
       .prepare("INSERT INTO proposals VALUES(?,?,?,?,?,?,?)")
       .run(
@@ -313,13 +403,44 @@ export class Processing {
         null,
       );
     this.vault.db
-      .prepare("UPDATE jobs SET state='review' WHERE id=?")
+      .prepare("UPDATE jobs SET state='review' WHERE id=? AND state!='running'")
       .run(jobId);
     this.vault.index(relative);
     return this.getProposal(id);
   }
   proposal(row: any): Proposal {
     const note = this.vault.read(row.path);
+    const state = note.metadata.kb_review_state;
+    const identity = note.metadata.kb_proposal as any;
+    if (
+      !["pending", "accepted", "rejected"].includes(String(state)) ||
+      note.id !== row.id ||
+      identity?.requestId !== row.request_id ||
+      identity?.jobId !== row.job_id
+    )
+      throw new AppError("草稿身份或审核状态无效，请先修复 Markdown", 409);
+    if (!this.accepting.has(row.id)) {
+      // Markdown owns review decisions; SQLite only caches an observed version.
+      if (digest(readUtf8(this.vault.absolute(row.path))) !== note.hash)
+        throw new AppError(
+          "草稿在读取期间改变，请重试",
+          409,
+          "VERSION_CONFLICT",
+        );
+      this.vault.db
+        .prepare(
+          "UPDATE proposals SET status=?,accepted_path=? WHERE id=? AND status=? AND body=?",
+        )
+        .run(
+          String(state),
+          note.metadata.kb_accepted_path
+            ? String(note.metadata.kb_accepted_path)
+            : null,
+          row.id,
+          row.status,
+          row.body,
+        );
+    }
     return {
       ...JSON.parse(row.body),
       ...((note.metadata.kb_proposal as any)?.baseHash
@@ -328,9 +449,11 @@ export class Processing {
       markdown: parseMarkdown(note.content).body,
       id: row.id,
       jobId: row.job_id,
-      status: row.status,
+      status: state as Proposal["status"],
       path: row.path,
-      acceptedPath: row.accepted_path,
+      acceptedPath: note.metadata.kb_accepted_path
+        ? String(note.metadata.kb_accepted_path)
+        : undefined,
       draftHash: note.hash,
       ...(note.draft
         ? { recovery: parseMarkdown(note.draft.content).body }
@@ -368,15 +491,32 @@ export class Processing {
   rebuildProposals() {
     for (const n of this.vault
       .list()
-      .filter((n) => n.path.startsWith(`${MANAGED}/Drafts/`))) {
+      .filter((n) => !n.missing && n.path.startsWith(`${MANAGED}/Drafts/`))) {
       try {
         const doc = this.vault.read(n.path),
           p = doc.metadata.kb_proposal as any;
         if (!p) continue;
+        if (this.accepting.has(n.id)) continue;
         const parsed = draftProposalSchema.parse({
           ...p,
           markdown: parseMarkdown(doc.content).body,
         });
+        const receipt = path.join(
+          this.vault.dataDir,
+          "submissions",
+          n.id + ".json",
+        );
+        const submission = fs.existsSync(receipt)
+          ? JSON.parse(readUtf8(receipt))
+          : null;
+        if (
+          submission &&
+          (submission.id !== n.id ||
+            submission.jobId !== p.jobId ||
+            submission.requestId !== p.requestId ||
+            submission.inputHash !== p.inputHash)
+        )
+          throw new AppError("提交恢复记录与 Markdown 身份不匹配", 409);
         this.vault.db
           .prepare("INSERT OR IGNORE INTO proposals VALUES(?,?,?,?,?,?,?)")
           .run(
@@ -384,16 +524,28 @@ export class Processing {
             p.jobId,
             String(doc.metadata.kb_review_state || "pending"),
             n.path,
-            JSON.stringify(parsed),
+            JSON.stringify(
+              submission
+                ? draftProposalSchema.parse(submission.proposal)
+                : parsed,
+            ),
             p.requestId,
             doc.metadata.kb_accepted_path
               ? String(doc.metadata.kb_accepted_path)
               : null,
           );
-      } catch {}
+        const row = this.vault.db
+          .prepare("SELECT * FROM proposals WHERE id=?")
+          .get(n.id);
+        if (row) this.proposal(row);
+      } catch {
+        this.vault.warnings.push(`审核稿协调失败，原任务状态保留：${n.path}`);
+      }
     }
   }
   edit(id: string, markdown: string, expectedHash: string) {
+    this.assertIdle(id);
+    parseMarkdown(markdown);
     const p = this.getProposal(id);
     if (p.status !== "pending") throw new AppError("此草稿已审核", 409);
     const note = this.vault.read(p.path),
@@ -406,6 +558,39 @@ export class Processing {
     return this.getProposal(id);
   }
   async accept(
+    id: string,
+    markdown: string,
+    saveManaged: (
+      path: string,
+      text: string,
+      hash: string,
+    ) => Promise<NoteLike>,
+    expectedDraftHash?: string,
+  ) {
+    this.assertIdle(id);
+    // Synchronize a fresh file version before reserving the asynchronous acceptance.
+    this.getProposal(id);
+    this.accepting.add(id);
+    try {
+      return await this.acceptReserved(
+        id,
+        markdown,
+        saveManaged,
+        expectedDraftHash,
+      );
+    } finally {
+      this.accepting.delete(id);
+    }
+  }
+  assertIdle(id: string) {
+    if (this.accepting.has(id))
+      throw new AppError(
+        "此草稿正在接受，请等待当前保存完成",
+        409,
+        "ACCEPT_IN_PROGRESS",
+      );
+  }
+  async acceptReserved(
     id: string,
     markdown: string,
     saveManaged: (
@@ -428,11 +613,35 @@ export class Processing {
         409,
         "VERSION_CONFLICT",
       );
-    const sources = Array.isArray(parsed.metadata.kb_source_paths)
-      ? parsed.metadata.kb_source_paths.map(String)
-      : this.get(p.jobId)
-          .snapshot.sources.filter((s) => p.sourceIds.includes(s.id))
-          .map((s) => s.path);
+    parseMarkdown(markdown);
+    const snapshots = this.get(p.jobId).snapshot.sources.filter((s) =>
+      p.sourceIds.includes(s.id),
+    );
+    if (snapshots.length !== new Set(p.sourceIds).size)
+      throw new AppError("来源不在原始批次内", 409, "SOURCE_UNAVAILABLE");
+    this.vault.scan();
+    if (this.vault.warnings.length)
+      throw new AppError(
+        "来源索引尚未完整读取，请等待文件可用后重试",
+        409,
+        "SOURCE_UNAVAILABLE",
+      );
+    const candidates = this.vault
+      .list()
+      .filter((n) => !n.missing)
+      .map((n) => this.vault.read(n.path));
+    const sources = snapshots.map((s) => {
+      const matches = candidates.filter(
+        (n) => (n.metadata.kb_source as any)?.id === s.id,
+      );
+      if (matches.length !== 1)
+        throw new AppError(
+          `来源 ${s.ref.title} ${matches.length ? "身份存在歧义" : "暂不可用"}；请修复后重试`,
+          409,
+          "SOURCE_UNAVAILABLE",
+        );
+      return matches[0].path;
+    });
     const receipt = path.join(
       this.vault.dataDir,
       "acceptances",
@@ -495,9 +704,54 @@ export class Processing {
           kb_reviewed_at: now(),
           kb_proposal_id: p.id,
           kb_unresolved: p.unresolved,
+          kb_source_snapshots: snapshots.map(
+            ({ id, path, version, ref, text }) => ({
+              id,
+              path,
+              version,
+              ref,
+              text,
+            }),
+          ),
         },
         doc.body +
           `\n\n## 材料来源\n\n${sources.map((s) => `- [[${s}]]`).join("\n")}\n`,
+      );
+    }
+    if (p.action === "amend" && current?.owner !== "paperdesk") {
+      const doc = parseMarkdown(markdown),
+        original = current!.metadata;
+      const values = (v: unknown): unknown[] =>
+        v === undefined ? [] : Array.isArray(v) ? v : [v];
+      final = formatMarkdown(
+        {
+          ...doc.metadata,
+          ...original,
+          kb_id: current!.id,
+          status: "working",
+          source: [
+            ...new Set([
+              ...values(original.source),
+              ...sources.map((s) => `[[${s}]]`),
+            ]),
+          ],
+          kb_unresolved: [
+            ...new Set([...values(original.kb_unresolved), ...p.unresolved]),
+          ],
+          kb_source_snapshots: [
+            ...values(original.kb_source_snapshots),
+            ...snapshots.map(({ id, path, version, ref, text }) => ({
+              id,
+              path,
+              version,
+              ref,
+              text,
+            })),
+          ],
+          kb_proposal_id: p.id,
+          kb_reviewed_at: now(),
+        },
+        doc.body,
       );
     }
     if (!intent) {
@@ -560,6 +814,7 @@ export class Processing {
     return note;
   }
   rebase(id: string, expectedDraftHash: string, targetHash: string) {
+    this.assertIdle(id);
     const p = this.getProposal(id);
     if (p.status !== "pending" || p.action !== "amend")
       throw new AppError("只有待审修订稿可以更新基准", 409);
@@ -601,6 +856,7 @@ export class Processing {
     return this.getProposal(id);
   }
   reject(id: string) {
+    this.assertIdle(id);
     const p = this.getProposal(id);
     if (p.status !== "pending") return p;
     const draft = this.vault.read(p.path),

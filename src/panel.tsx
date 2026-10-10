@@ -2,6 +2,8 @@ import { App as McpApp } from "@modelcontextprotocol/ext-apps";
 import React from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import { initializeRemoteRecovery, flushRecovery } from "./recovery";
+import { requirePanelFeatures } from "../shared/recovery";
 import "katex/dist/katex.min.css";
 import "./styles.css";
 import "./themes.css";
@@ -115,6 +117,7 @@ bridge.ontoolresult = () => {}; // Tool results never cause automatic reading/sh
 bridge.onteardown = async () => {
   // Flush uses the same recovery-draft and version checks as the desktop editor.
   await Promise.all([...flushers].map((flush) => flush()));
+  await flushRecovery(undefined, true);
   closed = true;
   observer.disconnect();
   imageQueue.length = 0;
@@ -124,9 +127,12 @@ bridge.onteardown = async () => {
 };
 
 async function start() {
+  document.documentElement.classList.add("native-panel");
   await bridge.connect();
   const status = await invoke("GET", "/status");
+  requirePanelFeatures(status);
   vaultId = status.vault?.id || null;
+  if (vaultId) await initializeRemoteRecovery(vaultId, invoke);
   window.workbench = {
     panel: true,
     invoke,
@@ -167,7 +173,6 @@ async function start() {
         );
     },
   };
-  document.documentElement.classList.add("native-panel");
   observer.observe(document.body, {
     childList: true,
     subtree: true,
@@ -184,6 +189,15 @@ async function start() {
 }
 void start().catch((error) => {
   const container = document.getElementById("root")!;
-  container.textContent = `知识工作台未能打开：${error.message}。请确认桌面工作台已启动，再关闭并重新打开此面板。`;
-  container.setAttribute("role", "alert");
+  const card = document.createElement("section");
+  card.setAttribute("role", "alert");
+  const title = document.createElement("h2");
+  title.textContent =
+    error.code === "SERVICE_UPGRADE_REQUIRED"
+      ? "需要更新桌面工作台"
+      : "知识工作台暂时无法打开";
+  const detail = document.createElement("p");
+  detail.textContent = error.message;
+  card.append(title, detail);
+  container.replaceChildren(card);
 });
