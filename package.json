@@ -1,6 +1,6 @@
 {
   "name": "knowledge-workbench",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "description": "Windows 模拟 IC 学习、写作与知识整理工作台",
   "private": true,
   "type": "module",
@@ -21,6 +21,7 @@
     "plugin:install": "node scripts/setup-plugin.mjs --install",
     "test:mcp": "node --import tsx scripts/test-mcp.mjs",
     "test:paperdesk": "node --import tsx scripts/test-paperdesk.mjs",
+    "test:packaged-paperdesk": "node scripts/test-packaged-paperdesk.mjs",
     "test:codex-host": "node --import tsx scripts/test-codex-host.mjs",
     "test:capture": "node scripts/test-capture.mjs"
   },
@@ -32,6 +33,7 @@
     },
     "files": [
       "desktop/**/*",
+      "!desktop/*.nsh",
       "build/**/*",
       "dist/**/*",
       "plugins/**/*",
@@ -48,6 +50,7 @@
       "artifactName": "KnowledgeWorkbench-${version}-win-${arch}.${ext}"
     },
     "nsis": {
+      "include": "desktop/installer.nsh",
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,

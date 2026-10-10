@@ -22,6 +22,15 @@ npm.cmd run desktop:dist
 
 `desktop:pack` 生成 Windows x64 目录包；`desktop:dist` 生成当前版本安装程序，不自动发布。打包后设置 `KWB_TEST_EXE` 为目录包 exe 的绝对路径，再运行 `test:ui` 验证实际包。关闭窗口会等待保存；未处理冲突时返回编辑。
 
+安装器检测目标 EXE 是否仍被占用；占用时退出并提示先保存和关闭，不按进程名称杀进程。Codex 插件也可能正在使用该 EXE。默认用户安装路径为 `%LOCALAPPDATA%/Programs/knowledge-workbench/`，桌面入口应指向完整安装目录，不能只复制 EXE。静默安装和占用保护可分别验证，静默安装不替代交互向导验收。
+
+```powershell
+node scripts/test-installer.mjs <已安装的工作台EXE> <NSIS安装包>
+npm.cmd run test:packaged-paperdesk -- --paperdesk-exe <已安装的纸间EXE> --workbench-exe <已安装的工作台EXE> --paperdesk-source <纸间源码目录>
+```
+
+打包联调只从源码读取合成 PDF 夹具与清理帮助函数，两个产品由真实 EXE 启动，资料位于自动清理的系统临时目录。设置 `KWB_TEST_BROWSER=msedge` 可使用本机 Edge，默认使用 Playwright Chromium。脚本默认记录桌面来源按钮的目的地址，然后在隔离浏览器验证原页；操作系统打开外部浏览器这一步在自动模式下替换。可显式加 `--system-browser` 实际打开系统浏览器；按终端提示核验并关闭测试页后，在当前证据目录填写确认文件。浏览器不可检查时如实填写 `verified:false` 与原因，不能把接口调用成功当作窗口验收。
+
 ## Codex 内编辑
 
 工作台设置里点击“准备本地插件”，按显示的两条命令添加本地市场与插件；开发环境可用 `npm.cmd run plugin:setup`。插件构建产物和运行配置分开，插件包中没有个人笔记或密钥。

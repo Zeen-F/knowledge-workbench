@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { expect } from "@playwright/test";
 import path from "node:path";
 
-export async function exportSelections(context, base, evidence) {
-  const page = await context.newPage();
-  await page.goto(base);
+export async function exportSelections(context, base, evidence, desktopPage) {
+  const page = desktopPage || (await context.newPage());
+  if (!desktopPage) await page.goto(base);
   const pageInput = page.getByRole("spinbutton", { name: "页码", exact: true });
   await expect(pageInput).toBeEnabled();
   await page
@@ -125,7 +125,7 @@ export async function exportSelections(context, base, evidence) {
     height: 0.33,
   }))
     assert.ok(Math.abs(region.rects[0][key] - expected) < 0.015);
-  await page.close();
+  if (!desktopPage) await page.close();
   return { text: attempts[0], region };
 }
 
