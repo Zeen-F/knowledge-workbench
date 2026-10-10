@@ -44,6 +44,7 @@ let dropCaptureAck = false,
   failReviewSave = false;
 let holdCapture = false,
   releaseCapture;
+const staleReplies = [];
 try {
   await client.connect(
     new StdioClientTransport({
@@ -80,6 +81,14 @@ try {
   });
   page.on("pageerror", (e) => errors.push(e.message));
   await page.exposeFunction("hostRequest", async (message) => {
+    if (message.method === "test/stale-reply")
+      return new Promise((resolve, reject) => {
+        staleReplies.push(() =>
+          message.params.fail
+            ? reject(new Error("synthetic stale failure"))
+            : resolve({ stale: true }),
+        );
+      });
     if (message.method === "ui/initialize")
       return {
         protocolVersion: "2026-01-26",
@@ -141,24 +150,36 @@ try {
   );
   await page.goto("http://127.0.0.1:59999/");
   await page.evaluate(() => {
+    window.panelGeneration = 0;
+    window.discardedReplies = 0;
     window.addEventListener("message", async (event) => {
-      if (event.source !== document.querySelector("iframe").contentWindow)
+      const source = event.source;
+      if (!source || source !== document.querySelector("iframe").contentWindow)
         return;
+      const generation = window.panelGeneration;
       const m = event.data;
       if (!m.method || m.id === undefined) return;
+      let reply;
       try {
         const result = await window.hostRequest(m);
-        event.source.postMessage({ jsonrpc: "2.0", id: m.id, result }, "*");
+        reply = { jsonrpc: "2.0", id: m.id, result };
       } catch (e) {
-        event.source.postMessage(
-          {
-            jsonrpc: "2.0",
-            id: m.id,
-            error: { code: -32603, message: e.message },
-          },
-          "*",
-        );
+        reply = {
+          jsonrpc: "2.0",
+          id: m.id,
+          error: { code: -32603, message: e.message },
+        };
       }
+      // A reload can invalidate event.source while the real MCP call is pending.
+      // Never route that document's replies into the replacement panel.
+      if (
+        generation !== window.panelGeneration ||
+        source !== document.querySelector("iframe").contentWindow
+      ) {
+        window.discardedReplies++;
+        return;
+      }
+      source.postMessage(reply, "*");
     });
   });
   page.on("request", (r) => {
@@ -166,6 +187,7 @@ try {
   });
   const load = () =>
     page.evaluate((html) => {
+      window.panelGeneration++;
       document.querySelector("iframe").srcdoc = html.replace(
         "<head>",
         "<head><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'\">",
@@ -244,7 +266,25 @@ try {
   await expect(
     frame.getByText("已保留本机恢复草稿，尚未写入知识库", { exact: true }),
   ).toBeVisible();
+  const discardedBefore = await page.evaluate(() => window.discardedReplies);
+  await thought.evaluate(() => {
+    for (const fail of [false, true])
+      window.parent.postMessage(
+        {
+          jsonrpc: "2.0",
+          id: "stale-" + fail,
+          method: "test/stale-reply",
+          params: { fail },
+        },
+        "*",
+      );
+  });
+  await expect.poll(() => staleReplies.length).toBe(2);
   await load();
+  for (const release of staleReplies) release();
+  await expect
+    .poll(() => page.evaluate(() => window.discardedReplies))
+    .toBeGreaterThanOrEqual(discardedBefore + 2);
   await inbox();
   await expect(thought).toHaveValue("面板恢复想法");
   const captureCount = service.captures.list().length;
@@ -478,6 +518,7 @@ try {
       "native-resource",
       "real-MCP-transport",
       "sandbox-no-network",
+      "host-discards-replies-after-reload",
       "edit-save-reopen",
       "teardown-flush",
       "math",
