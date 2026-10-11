@@ -4,7 +4,7 @@ import { createNoteResolver, localLinkTarget } from "../shared/note-links.ts";
 
 export function relatedNotes(vault: Vault, from: string) {
   const notes = vault.list().filter((n) => !n.missing);
-  const resolve = createNoteResolver(notes.map((n) => n.path));
+  const resolve = createNoteResolver(vault.linkPaths());
   const outgoing = new Map<string, any>(),
     incoming = new Map<string, any>();
   const rows = vault.db.prepare("SELECT * FROM relations").all() as any[];

@@ -230,8 +230,13 @@ export async function startService(options: ServiceOptions) {
       ? paperdesk!.save(relative, content, hash)
       : vault!.save(relative, content, hash);
   app.get("/api/notes", (req, res) => {
-    const q = String(req.query.q || "");
-    res.json(q ? vault!.search(q) : vault!.list());
+    const { q, scope } = z
+      .object({
+        q: z.string().default(""),
+        scope: z.enum(["workbench", "vault"]).default("vault"),
+      })
+      .parse(req.query);
+    res.json(vault!.search(q, scope));
   });
   app.post("/api/refresh", (_req, res) => {
     const scan = vault!.scan(),
@@ -304,6 +309,22 @@ export async function startService(options: ServiceOptions) {
   app.get("/api/relations", (req, res) => {
     const p = route.parse(req.query).path;
     res.json(relatedNotes(vault!, p));
+  });
+  app.get("/api/resolve-link", (req, res) => {
+    const input = z
+      .object({
+        path: relativePathSchema,
+        target: z.string().max(8192),
+        style: z.enum(["wiki", "markdown"]),
+      })
+      .parse(req.query);
+    const resolved = vault!.resolveLink(input.target, input.path, input.style);
+    const outside = Boolean(
+      resolved &&
+        vault!.scopePath &&
+        !resolved.startsWith(vault!.scopePath + "/"),
+    );
+    res.json({ path: outside ? null : resolved, outside });
   });
   app.post("/api/assets", (req, res) => {
     const b = z

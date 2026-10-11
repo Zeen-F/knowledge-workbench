@@ -37,11 +37,13 @@ try {
       .getByRole("button", { name: /收集箱/ })
       .first()
       .click();
-  const all = () =>
-    page
+  const all = async () => {
+    await page.getByLabel("笔记范围").selectOption("vault");
+    await page
       .getByRole("button", { name: /全部笔记/ })
       .first()
       .click();
+  };
   await inbox();
   await page.getByLabel("想法标题").fill("未保存标题");
   await page.getByLabel("快速记录想法").fill("未点击保存也必须恢复");
@@ -170,7 +172,7 @@ try {
     }
     await route.continue();
   });
-  const search = page.getByPlaceholder("搜索笔记与想法");
+  const search = page.getByLabel("搜索知识库");
   await search.fill("Alpha");
   await searchArrived;
   await search.fill("新操作");
@@ -254,7 +256,9 @@ try {
   });
   const reviewEditor = page.getByLabel("笔记编辑器");
   await reviewEditor.click();
-  await reviewEditor.press("Control+End");
+  await reviewEditor.press(
+    process.platform === "darwin" ? "Meta+ArrowDown" : "Control+End",
+  );
   await page.keyboard.insertText("\n离线审核的新判断");
   await all();
   await page

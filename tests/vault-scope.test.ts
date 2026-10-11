@@ -123,6 +123,19 @@ test("subfolder collection, assets, review and restart keep their paths inside t
   );
   assert.ok(accepted.path);
   assert.ok(accepted.path.startsWith("电源 研究/KnowledgeWorkbench/Cards/"));
+  assert.ok(
+    vault!
+      .search("RC", "workbench")
+      .some((note) => note.path === accepted.path),
+  );
+  assert.ok(
+    vault!
+      .search("合成 RC 材料", "workbench")
+      .every(
+        (note) =>
+          !note.path.includes("/Inbox/") && !note.path.includes("/Drafts/"),
+      ),
+  );
   const reopened = await open(selected);
   assert.ok(reopened.vault!.list().some((n) => n.path === accepted.path));
   assert.equal(reopened.captures!.list().length, 1);
@@ -169,4 +182,38 @@ test("a junction to a sibling folder cannot escape the selected scope", async (t
     vault!.list().some((n) => n.title === "不在所选范围"),
     false,
   );
+});
+
+test("scoped navigation and renaming preserve root-priority short wiki links", async (t) => {
+  const { root, open } = fixture(t);
+  atomicWrite(path.join(root, "A.md"), "# Parent A");
+  atomicWrite(
+    path.join(root, "KnowledgeWorkbench", "Cards", "A.md"),
+    "# Local A",
+  );
+  atomicWrite(
+    path.join(root, "KnowledgeWorkbench", "Cards", "Links.md"),
+    "# Links\n\n[[A]] [[./A]]",
+  );
+  const service = await open(path.join(root, "KnowledgeWorkbench"));
+  const vault = service.vault!;
+  const from = "KnowledgeWorkbench/Cards/Links.md";
+  const response = await fetch(
+    service.baseUrl +
+      "/api/resolve-link?" +
+      new URLSearchParams({ path: from, target: "A", style: "wiki" }),
+    { headers: { Authorization: "Bearer " + service.token } },
+  ).then((r) => r.json());
+  assert.deepEqual(response, { path: null, outside: true });
+  assert.equal(
+    vault.resolveLink("./A", from, "wiki"),
+    "KnowledgeWorkbench/Cards/A.md",
+  );
+  const local = vault.read("KnowledgeWorkbench/Cards/A.md");
+  vault.move(local.path, "KnowledgeWorkbench/Cards/Local.md", local.hash, true);
+  assert.equal(
+    vault.read(from).content,
+    "# Links\n\n[[A]] [[KnowledgeWorkbench/Cards/Local]]",
+  );
+  assert.equal(fs.readFileSync(path.join(root, "A.md"), "utf8"), "# Parent A");
 });

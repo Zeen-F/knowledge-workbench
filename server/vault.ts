@@ -3,6 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { resolveVaultSelection } from "../desktop/vault-selection.mjs";
+import { createNoteResolver } from "../shared/note-links.ts";
 import {
   MANAGED,
   sourceRefSchema,
@@ -117,6 +118,74 @@ export class Vault {
       );
     // Also reject junctions that point at another folder inside the parent vault.
     return safePath(this.scope, portable(path.relative(this.scope, file)));
+  }
+  linkPaths(): string[] {
+    if (!this.scopePath)
+      return this.list()
+        .filter((note) => !note.missing)
+        .map((note) => note.path);
+    // A short wiki name keeps the parent vault's meaning. Only enumerate names
+    // outside the chosen folder; never read/index their Markdown bodies.
+    const paths: string[] = [];
+    const ignore = this.ignoredPaths();
+    const walk = (directory: string) => {
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(directory, { withFileTypes: true });
+      } catch {
+        throw new AppError(
+          "部分目录暂不可读，无法确认同名链接，请稍后重试",
+          409,
+        );
+      }
+      for (const entry of entries) {
+        if (
+          entry.name.startsWith(".") ||
+          ["node_modules", "_templates"].includes(entry.name) ||
+          entry.isSymbolicLink()
+        )
+          continue;
+        const target = path.join(directory, entry.name);
+        const relative = portable(path.relative(this.root, target));
+        if (
+          ignore.some(
+            (prefix) =>
+              relative === prefix.replace(/\/$/, "") ||
+              relative.startsWith(prefix.endsWith("/") ? prefix : prefix + "/"),
+          )
+        )
+          continue;
+        if (entry.isDirectory()) walk(target);
+        else if (
+          entry.isFile() &&
+          /\.md$/i.test(entry.name) &&
+          entry.name !== "AGENTS.md" &&
+          !relative.endsWith("/Library.md")
+        )
+          paths.push(relative);
+      }
+    };
+    walk(this.root);
+    return paths;
+  }
+  resolveLink(target: string, from: string, style: "wiki" | "markdown") {
+    this.absolute(from);
+    return createNoteResolver(this.linkPaths())(target, from, style);
+  }
+  private ignoredPaths(): string[] {
+    try {
+      const config = JSON.parse(
+        readUtf8(path.join(this.root, ".obsidian", "app.json")),
+      );
+      return [
+        "_meta/",
+        ...(config.userIgnoreFilters || []).filter(
+          (value: unknown) => typeof value === "string",
+        ),
+      ];
+    } catch {
+      return ["_meta/"];
+    }
   }
   summary(row: Row): NoteSummary {
     return {
@@ -299,18 +368,7 @@ export class Vault {
       ).map((row) => [row.path, row]),
     );
     const restore = this.db.prepare("UPDATE notes SET missing=0 WHERE path=?");
-    let ignore = ["_meta/"];
-    try {
-      const config = JSON.parse(
-        readUtf8(path.join(this.root, ".obsidian", "app.json")),
-      );
-      ignore = [
-        ...ignore,
-        ...(config.userIgnoreFilters || []).filter(
-          (v: unknown) => typeof v === "string",
-        ),
-      ];
-    } catch {}
+    const ignore = this.ignoredPaths();
     const walk = (dir: string) => {
       let entries: fs.Dirent[];
       try {
@@ -424,23 +482,51 @@ export class Vault {
         .all() as Row[]
     ).map((r) => this.summary(r));
   }
-  search(query: string) {
+  search(query: string, scope: "workbench" | "vault" = "vault") {
     const q = query.trim().slice(0, 200);
-    if (!q) return this.list();
+    if (!q)
+      return this.list().filter(
+        (note) =>
+          scope === "vault" ||
+          (!note.missing &&
+            note.path.startsWith(`${this.managed}/`) &&
+            !note.path.includes("/Drafts/") &&
+            !note.path.includes("/Inbox/")),
+      );
+    // Apply the workspace boundary before ranking/limiting, so unrelated notes
+    // cannot crowd managed notes out of the first 100 search results.
+    const scopeFilter =
+      scope === "workbench"
+        ? " AND substr(n.path,1,?)=? AND n.path NOT GLOB ? AND n.path NOT GLOB ?"
+        : "";
+    const scopeArgs =
+      scope === "workbench"
+        ? [
+            this.managed.length + 1,
+            `${this.managed}/`,
+            "*/Drafts/*",
+            "*/Inbox/*",
+          ]
+        : [];
     let rows: Row[];
     if (Array.from(q).length >= 3)
       rows = this.db
         .prepare(
-          "SELECT n.* FROM notes_fts f JOIN notes n ON n.path=f.path WHERE notes_fts MATCH ? AND n.missing=0 ORDER BY bm25(notes_fts) LIMIT 100",
+          "SELECT n.* FROM notes_fts f JOIN notes n ON n.path=f.path WHERE notes_fts MATCH ? AND n.missing=0" +
+            scopeFilter +
+            " ORDER BY bm25(notes_fts) LIMIT 100",
         )
-        .all('"' + q.replaceAll('"', '""') + '"') as Row[];
+        .all('"' + q.replaceAll('"', '""') + '"', ...scopeArgs) as Row[];
     else
       rows = this.db
         .prepare(
-          "SELECT n.* FROM notes_fts f JOIN notes n ON n.path=f.path WHERE (f.title LIKE ? ESCAPE '\\' OR f.body LIKE ? ESCAPE '\\' OR f.tags LIKE ? ESCAPE '\\') AND n.missing=0 LIMIT 100",
+          "SELECT n.* FROM notes_fts f JOIN notes n ON n.path=f.path WHERE (f.title LIKE ? ESCAPE '\\' OR f.body LIKE ? ESCAPE '\\' OR f.tags LIKE ? ESCAPE '\\') AND n.missing=0" +
+            scopeFilter +
+            " LIMIT 100",
         )
         .all(
           ...Array(3).fill("%" + q.replace(/[\\%_]/g, "\\$&") + "%"),
+          ...scopeArgs,
         ) as Row[];
     return rows.map((r) => this.summary(r));
   }
@@ -561,7 +647,7 @@ export class Vault {
     if (!to.endsWith(".md") || fs.existsSync(target))
       throw new AppError("目标已存在或不是 Markdown 文件", 409);
     const all = this.list().filter((n) => !n.missing),
-      paths = all.map((n) => n.path),
+      paths = this.scopePath ? this.linkPaths() : all.map((n) => n.path),
       rewrite = createLinkRewriter(from, to, paths);
     const updates = all
       .map((n) => this.read(n.path))

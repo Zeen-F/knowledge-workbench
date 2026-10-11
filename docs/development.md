@@ -21,7 +21,7 @@ npm.cmd run desktop:pack
 npm.cmd run desktop:dist
 ```
 
-`desktop:pack` 生成 Windows x64 目录包；`desktop:dist` 生成当前版本安装程序，不自动发布。打包后设置 `KWB_TEST_EXE` 为目录包 exe 的绝对路径，再运行 `test:ui` 验证实际包。关闭窗口会等待保存；未处理冲突时返回编辑。
+`desktop:pack` 和 `desktop:dist` 按当前主机平台生成目录包和安装包，不自动发布。Windows x64 可显式使用 `desktop:pack:win` / `desktop:dist:win`；macOS 使用 `desktop:pack:mac` / `desktop:dist:mac`，默认匹配主机架构，输出 `.app`、DMG 与 ZIP。Mac 安装与权限说明见 [Mac 适配](macos.md)。打包后设置 `KWB_TEST_EXE` 为目录包 exe 的绝对路径，再运行 `test:ui` 验证实际包。关闭窗口会等待保存；未处理冲突时返回编辑。
 
 安装器检测目标 EXE 是否仍被占用；占用时退出并提示先保存和关闭，不按进程名称杀进程。Codex 插件也可能正在使用该 EXE。默认用户安装路径为 `%LOCALAPPDATA%/Programs/knowledge-workbench/`，桌面入口应指向完整安装目录，不能只复制 EXE。静默安装和占用保护可分别验证，静默安装不替代交互向导验收。
 

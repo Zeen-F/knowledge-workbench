@@ -22,6 +22,7 @@ function BranchNotes({
   active,
   dirty,
   onOpen,
+  basePath,
 }: Omit<TreeProps, "notes"> & {
   branch: Branch;
   prefix: string;
@@ -68,6 +69,14 @@ function BranchNotes({
             active={active}
             dirty={dirty}
             onOpen={onOpen}
+            basePath={basePath}
+            label={
+              basePath && prefix === basePath + "/"
+                ? { Cards: "知识卡", Journal: "学习记录", Assets: "附件" }[
+                    name
+                  ] || name
+                : name
+            }
           />
         ))}
     </>
@@ -76,6 +85,7 @@ function BranchNotes({
 function TreeFolder(
   props: Omit<TreeProps, "notes"> & {
     name: string;
+    label: string;
     branch: Branch;
     prefix: string;
     compact: boolean;
@@ -96,7 +106,7 @@ function TreeFolder(
         }}
       >
         <Folder size={14} />
-        <span>{props.name}</span>
+        <span>{props.label}</span>
         <small>{props.branch.count}</small>
       </summary>
       {open && (
@@ -114,8 +124,10 @@ export function NoteTree({ notes, basePath = "", ...props }: TreeProps) {
     for (const note of notes) {
       let branch = root;
       branch.count++;
-      for (const folder of note.path
-        .slice(base.length)
+      for (const folder of (base && note.path.startsWith(base)
+        ? note.path.slice(base.length)
+        : note.path
+      )
         .split("/")
         .slice(0, -1)) {
         if (!branch.children.has(folder))
@@ -135,6 +147,7 @@ export function NoteTree({ notes, basePath = "", ...props }: TreeProps) {
     <BranchNotes
       branch={root}
       prefix={base}
+      basePath={basePath}
       compact={notes.length > 300}
       {...props}
     />
