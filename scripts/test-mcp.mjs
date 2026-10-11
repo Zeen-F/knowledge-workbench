@@ -37,6 +37,10 @@ try {
       "utf8",
     ),
   );
+  const portableManifest = JSON.parse(
+    fs.readFileSync("plugins/knowledge-workbench/plugin.json", "utf8"),
+  );
+  assert.equal(manifest.version, portableManifest.version);
   assert.equal(manifest.skills, "./skills/");
   assert.equal(
     fs.readFileSync(
@@ -83,6 +87,7 @@ try {
     }),
   );
   const tools = (await client.listTools()).tools;
+  assert.equal(client.getServerVersion().version, manifest.version);
   assert.equal(tools.length, 9);
   const open = tools.find((t) => t.name === "workbench_open");
   assert.equal(open.title, "打开知识工作台");

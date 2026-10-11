@@ -1,6 +1,6 @@
 # 科研笔记配置与 Codex 插件
 
-本页说明当前云端工作树新增的功能，尚未发布或替换用户电脑上的插件。
+本页说明桌面 alpha.4 与插件 alpha.5 中的科研整理功能。发布状态见 [Releases](https://github.com/Zeen-F/knowledge-workbench/releases)；桌面升级后仍需准备并更新本机插件，在新对话中启用。
 
 ## 使用
 
