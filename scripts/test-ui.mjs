@@ -20,8 +20,9 @@ fs.writeFileSync(
 fs.mkdirSync("output/playwright", { recursive: true });
 const env = { ...process.env, KWB_VAULT: vault, KWB_PROFILE: profile };
 delete env.ELECTRON_RUN_AS_NODE;
-const executable =
-  process.env.KWB_TEST_EXE || createRequire(import.meta.url)("electron");
+const executable = fs.realpathSync.native(
+  process.env.KWB_TEST_EXE || createRequire(import.meta.url)("electron"),
+);
 let app;
 const errors = [];
 let stage = "launch";

@@ -31,8 +31,10 @@ try {
     env,
     timeout: 60000,
   });
+  app.context().setDefaultTimeout(15000);
   appChild = app.process();
   const page = await app.firstWindow();
+  await page.getByLabel("笔记范围").selectOption("vault");
   await page
     .getByRole("button", { name: "从一个问题开始", exact: false })
     .first()
