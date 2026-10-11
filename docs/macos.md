@@ -58,3 +58,11 @@ KWB_TEST_EXE="$PWD/release/mac-arm64/Knowledge Workbench.app/Contents/MacOS/Know
 GitHub `macOS checks and preview` 工作流执行检查、浏览器回归、构建和成品桌面回归，并保存预览构建产物。新增工作流不等于远端 CI 已通过。当前实际验证结果另记于 [实施记录](implementation.md)。屏幕权限、真实输入法、实际 Codex 菜单点击、真实模型和正式 iCloud 库不由这些自动测试代替。
 
 平台行为依据：[Electron 菜单](https://www.electronjs.org/docs/latest/tutorial/menus)、[屏幕采集与授权](https://www.electronjs.org/docs/latest/api/desktop-capturer)、[electron-builder v26 Mac 打包](https://www.electron.build/v26/docs/mac/)。
+
+## 2026-10-11 远端核验与主分支集成
+
+`805bde2edf21ef2ea93eb851ec644828e25df790` 的 push 运行 [38068956888](https://github.com/Zeen-F/knowledge-workbench/actions/runs/38068956888) 已成功；macOS 15 ARM64 的源码桌面与打包 `.app` 桌面测试分别通过。成品日志在 16:48:57–16:49:14 UTC 完成 21 项检查，包括首次启动、保存、关闭后服务保持、activate 重开、退出后重启、保存失败阻止退出、插件 Electron stdio、默认专属范围、搜索隔离和全库切换。旧运行 `38063619772` 的首窗口超时不能代表此提交的状态。
+
+工件 [11676211954](https://github.com/Zeen-F/knowledge-workbench/actions/runs/38068956888/artifacts/11676211954) 未过期，289086281 字节，SHA-256 为 `0e8408014d218f4200d49c6cfedd21875314ab99b0b0f36c9abebc6e53da7fa7`，到期时间为 2026-10-24。其中安装包版本为 alpha.2；该工件不代表后续 alpha.3 集成提交的验证结果。Windows push 运行 [38068956886](https://github.com/Zeen-F/knowledge-workbench/actions/runs/38068956886) 同样成功。部分连接器只列出 PR 事件运行，返回空列表时不能据此断言没有 CI。
+
+集成主分支 `baaa9ad` 时保留 alpha.3 与跨平台描述。下一次 macOS 成品测试将 `.app` 复制到 checkout 外、含中文与空格的临时安装目录再启动，以验证插件配置不依赖构建目录。该步骤仍不是 DMG 挂载安装、下载隔离属性或 Gatekeeper 验收。集成提交在 Linux 云环境通过 `npm run check`（41 项）与 `npm run test:mcp`（9 个工具）；本环境没有 macOS，未运行本机 Mac 安装版或真实 Codex 宿主 UI。集成后的远端结果需再次核对。

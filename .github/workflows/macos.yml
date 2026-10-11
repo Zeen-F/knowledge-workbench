@@ -33,7 +33,10 @@ jobs:
         shell: bash
         run: |
           if [[ "$(uname -m)" == arm64 ]]; then folder=mac-arm64; else folder=mac; fi
-          KWB_TEST_EXE="$PWD/release/$folder/Knowledge Workbench.app/Contents/MacOS/Knowledge Workbench" npm run test:ui
+          installed="$RUNNER_TEMP/知识工作台 installed/Knowledge Workbench.app"
+          mkdir -p "$(dirname "$installed")"
+          ditto "release/$folder/Knowledge Workbench.app" "$installed"
+          KWB_TEST_EXE="$installed/Contents/MacOS/Knowledge Workbench" npm run test:ui
       - uses: actions/upload-artifact@v4
         if: always()
         with:
