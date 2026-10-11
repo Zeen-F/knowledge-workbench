@@ -31,6 +31,6 @@ Python Playwright / Edge 覆盖 7 项侧栏检查，包含 900×640 布局、键
 
 首轮检查发现小窗口底部设置被挤出，已修正并复测。桌面新增链接接口最初未进入 IPC 白名单，交互检查发现后已补齐；同时补齐旧科研预览接口。一次测试在保存完成前刷新，被离开保护拦截，改为等待实际保存确认。保留全部检查断言。
 
-Windows x64 NSIS alpha.4 更新包已生成；使用包内真实 EXE 和独立临时用户目录，重复通过全部 12 项新增桌面检查。当前使用中的已安装程序尚未替换，插件模板 alpha.5 未安装进 Codex 缓存。
+Windows x64 NSIS alpha.4 更新包已生成并安装。用户授权关闭旧程序后，窗口经正常保存流程退出，按执行路径和参数核实的旧插件连接随后关闭。首次安装因占用返回 2；确认文件占用解除后重试返回 0。安装目录内的 `app.asar` 与已验收成品一致，桌面快捷方式指向新版，原知识库选择和偏好文件的校验值未改变。包内 EXE 和已安装 EXE 分别在独立临时用户目录中通过全部 12 项新增桌面检查；正式库未作为测试夹具。插件模板 alpha.5 尚未安装进 Codex 缓存，原连接关闭后需要在新对话中重新启用。
 
-复现命令：`npm.cmd run check`、`npm.cmd run test:sidebar-subfolder`、`npm.cmd run test:ui`、`npm.cmd run test:mcp`、`npm.cmd run test:panel`、`npm.cmd run test:reliability-ui`。通过 `KWB_TEST_EXE` 指定包内 EXE 可重复成品测试。新增桌面检查已加入 Windows CI 配置；该分支尚未推送，因此不宣称远端 CI 通过。
+复现命令：`npm.cmd run check`、`npm.cmd run test:sidebar-subfolder`、`npm.cmd run test:ui`、`npm.cmd run test:mcp`、`npm.cmd run test:panel`、`npm.cmd run test:reliability-ui`。通过 `KWB_TEST_EXE` 指定包内或已安装 EXE 可重复成品测试。新增桌面检查已加入 Windows CI 配置；该分支尚未推送，因此不宣称远端 CI 通过。
