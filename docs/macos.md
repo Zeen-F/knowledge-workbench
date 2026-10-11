@@ -1,68 +1,104 @@
-# macOS 适配
+# macOS 安装与使用
 
-代码基线为 Windows 主工作区 `C:\Users\86177\Desktop\File\知识库开发` 对应的 GitHub `700dfec`。Mac 工作区通过 Git 克隆，适配在 `codex/macos-adaptation` 分支完成。Windows 工作区与个人资料保持原样。
+当前桌面版本为 **0.1.0-alpha.4**，配套 Codex 插件 **0.1.0-alpha.5**。Mac 与 Windows 共用主线源码；当前 Mac 下载面向 **Apple Silicon（arm64）**，仍为未公证预览版。
 
-## 开发与打包
+## 安装与升级
 
-需要 Node.js 24+，首次执行 `npm ci`，再执行 `npm run check`。`npm run dev` 使用合成库；`npm run build` 后 `npm start` 打开 Electron 桌面。首次启动选择已有 Obsidian 库；选择正式资料库前先完成示例验收。
+从 [alpha.4 Release](https://github.com/Zeen-F/knowledge-workbench/releases/tag/v0.1.0-alpha.4) 下载：
+
+- [DMG 安装映像](https://github.com/Zeen-F/knowledge-workbench/releases/download/v0.1.0-alpha.4/KnowledgeWorkbench-0.1.0-alpha.4-mac-arm64.dmg)
+- [ZIP 压缩包](https://github.com/Zeen-F/knowledge-workbench/releases/download/v0.1.0-alpha.4/KnowledgeWorkbench-0.1.0-alpha.4-mac-arm64.zip)
+- [SHA-256 校验文件](https://github.com/Zeen-F/knowledge-workbench/releases/download/v0.1.0-alpha.4/SHA256SUMS-mac-arm64.txt)与[构建来源](https://github.com/Zeen-F/knowledge-workbench/releases/download/v0.1.0-alpha.4/BUILDINFO-mac-arm64.json)
+
+将整个 `Knowledge Workbench.app` 放入“应用程序”或 `~/Applications`，不要单独复制内部可执行文件。应用自带运行时，日常使用不需要另装 Node.js。升级前保存并用 ⌘Q 退出，再替换 `.app`；建议保持安装路径不变。已有 Markdown、附件和库外运行配置保留原位置。
+
+当前安装包使用本地 **ad-hoc 签名，未做 Developer ID 签名或 Apple 公证**。本地签名校验通过不代表下载后可通过 Gatekeeper。尚未提供 Intel 下载包或完成 Intel 实机验收，也不提供自动更新。
+
+## 选择知识库
+
+- 选择 Obsidian 根目录时，默认进入 `KnowledgeWorkbench/` 专属空间“我的知识库”，目录、数量、最近编辑和搜索跟随范围；可切换到整个仓库。重新启动默认回到专属空间。
+- 直接选择已有 `KnowledgeWorkbench/` 时复用其 `Cards/`、`Journal/`、`Inbox/`、`Drafts/` 和 `Assets/`，不嵌套创建同名目录。
+- 选择其他子目录时，普通笔记读写限定于该目录；新建工作台资料放入它下面的 `KnowledgeWorkbench/`。切换前等待保存，不迁移已有笔记。
+
+索引、任务、恢复状态和设置默认保存在库外的 `~/.knowledge-workbench/`，并按选择范围区分。旧待审任务需回到创建它的目录范围审核。不要把另一台机器的本机运行配置或加密密钥直接搬过来；模型设置在本机重新填写。完整规则见[侧栏与子目录说明](sidebar-and-subfolders.md)。
+
+## Mac 操作与权限
+
+| 操作           | 行为                                                                  |
+| -------------- | --------------------------------------------------------------------- |
+| ⌘S / ⌘N / ⌘Z   | 保存 / 新建 / 撤销；复制、粘贴、全选也使用 Command                    |
+| 侧栏按钮与边界 | 收起或展开；拖动调宽、双击复位，边界获得焦点后可用方向键调整          |
+| ⌘W 或关闭按钮  | 等待保存后隐藏窗口，保留本地服务与 Codex 面板连接；从 Dock 点图标重开 |
+| ⌘Q             | 等待保存后退出并停止服务；保存失败时保留窗口与输入                    |
+| ⌘⌥S            | 框选截图，需要系统屏幕录制权限                                        |
+
+截图权限位于“系统设置 → 隐私与安全性 → 屏幕与系统音频录制”；安装版对应 Knowledge Workbench，开发运行对应 Electron。按系统提示授权并重启。没有权限时会提示原因，不把空白图像记为采集成功。截图按当前显示器的逻辑坐标换算原始像素；单次选区不跨屏，全屏空间行为需另行验收。
+
+启动与普通笔记操作不访问钥匙串；实际保存或读取模型密钥时才检查系统加密，可能出现 macOS 授权提示。加密不可用时拒绝该操作，不退回明文。预览版更换签名后可能需要重新确认钥匙串访问，详见 [Electron safeStorage 说明](https://www.electronjs.org/docs/latest/api/safe-storage/)。
+
+## Codex 插件
+
+先把应用放到固定位置，再在桌面“设置 → 准备本地插件”生成本机配置，执行界面显示的安装命令，并在 Codex 新对话启用插件。移动 `.app` 后重新准备，避免路径指向旧位置。独立插件 ZIP 是通用模板，不包含本机路径与个人资料。
+
+安装版插件使用应用内的运行时。关闭窗口后服务仍可用；完全退出后，插件可以根据已记录的路径唤起后台服务。原生面板与桌面后端需配套使用，旧 Codex 会话可能保留之前的连接。开发环境可使用 `npm run plugin:setup`。
+
+## 本版验收
+
+2026-10-12，Apple Silicon 实机基于主线 `764bceac34ab09868cd8449ac8198801ba421d12` 完成构建与安装验收。该提交与发布标签 `v0.1.0-alpha.4` 指向的 `c7aafd5` 具有相同源码树 `17eb4bd1f89c1e78ca792b6030318702ac7d09f7`。Mac 下载包来自这次本机构建，来源与校验值记录在 `BUILDINFO-mac-arm64.json`；Windows 下载包仍沿用其独立 CI 构建记录。
+
+| 检查         | 结果                                                                                                      |
+| ------------ | --------------------------------------------------------------------------------------------------------- |
+| 完整本地检查 | 格式、类型、91 项核心/服务测试与生产构建通过                                                              |
+| 安装版桌面   | 22 项通过，覆盖编辑、渲染链接、公式、主题、保存/撤销、待审稿、重启、默认范围，以及 Mac 关闭/Dock/退出行为 |
+| 侧栏与子目录 | 12 项通过，覆盖鼠标和键盘调宽、布局恢复、目录切换、同名链接、科研预览与错误目录保留编辑器                 |
+| 插件与面板   | 9 个 MCP 工具、21 项面板协议检查通过；已安装 alpha.5 插件缓存的实际 stdio 连接与桌面服务核验通过          |
+| 恢复与竞态   | 8 组浏览器可靠性场景通过，页面错误为零                                                                    |
+| 包与安装内容 | DMG、ZIP 内的 `app.asar` 与已验收安装版一致；本地 ad-hoc 签名校验通过                                     |
+
+同一主线提交的 [macOS CI](https://github.com/Zeen-F/knowledge-workbench/actions/runs/38152811566)、[Windows CI](https://github.com/Zeen-F/knowledge-workbench/actions/runs/38152811459)和 [Windows 安装包工作流](https://github.com/Zeen-F/knowledge-workbench/actions/runs/38152822254)均成功。
+
+自动测试使用隔离的临时合成库。更新后也查看了实际 Mac 窗口，确认专属空间与侧栏入口；原有笔记、配置和 Obsidian 书签的校验值保持一致。个人库未作为写入测试夹具，私人日志和截图不随安装包或源码公开。
+
+这些结果不替代真实模型调用、Codex 桌面原生宿主菜单实测、中文输入法组合输入、iCloud 多设备同步、当前 Mac Paperdesk 双应用联动或下载后的 Gatekeeper 验收。早期版本的双屏截图与主线集成过程见[实施记录](implementation.md)，不将历史验收自动计为本版复测。
+
+## 开发与可重放检查
+
+需要 Node.js 24+：
+
+```sh
+npm ci
+npm run check
+npm start
+```
+
+`npm run dev` 使用合成库。构建命令：
 
 ```sh
 npm run desktop:pack:mac
 npm run desktop:dist:mac
 ```
 
-默认按当前 Mac 架构构建：Apple Silicon 输出到 `release/mac-arm64/Knowledge Workbench.app`，Intel 输出到 `release/mac/Knowledge Workbench.app`。安装包在 `release/`，文件名包含架构。要构建另一架构可追加 `-- --x64` 或 `-- --arm64`；能产出安装包不等于在该硬件上实际通过验收。
-
-将整个 `.app` 放入 Applications 或 `~/Applications`，再打开；不要单独复制内部可执行文件。当前使用本地 ad-hoc 签名，未配置 Developer ID 或 Apple 公证。下载后的系统验证与本地构建启动分别验收。
-
-## 正式签名与公证
-
-Apple 公证需要开发者计划的权限、带私钥的 Developer ID Application 签名身份及公证凭据。免费账号与本地 ad-hoc 签名不能替代这些前提；凭据应放入钥匙串或专用密钥存储，不进入源码。
-
-具备凭据后，需启用 Hardened Runtime、使用 Developer ID 重新签名并构建，再向 Apple 提交。只有收到 Accepted、附加并验证公证票据、通过 Gatekeeper 检查，以及对最终签名成品重做桌面和插件验收后，才标记为已公证。当前预览构建仍关闭公证；生成 DMG 或本地签名验证通过不代表完成公证。
-
-依据：[Apple Developer ID 证书](https://developer.apple.com/help/account/certificates/create-developer-id-certificates/)、[Apple 公证要求](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)。
-
-## Mac 操作
-
-- 选择现有 Obsidian 仓库后，默认进入“我的知识库”，专属文件夹为 `KnowledgeWorkbench/`。目录、数量、最近编辑和搜索只显示此范围；左侧“笔记范围”可切到“整个 Obsidian 仓库”。切换前等待保存，原有笔记保持原位置。每次重开默认回到专属空间。
-- 使用 ⌘S 保存、⌘N 新建、⌘Z 撤销；复制、粘贴、全选等也使用 Command。
-- ⌘W 或关闭按钮先等待保存，再隐藏窗口，保留本地服务和 Codex 面板连接。从 Dock 点图标重开。⌘Q 退出时等待保存，停止服务；保存失败保留窗口并提示处理。
-- ⌘⌥S 框选截图。macOS 需要“系统设置 → 隐私与安全性 → 屏幕与系统音频录制”许可；正式应用对应 Knowledge Workbench，开发运行对应 Electron。按系统提示授权并重启。没有授权时提示原因，不把空白屏幕记为采集成功。
-- 截图选区按当前显示器的逻辑坐标换算原始像素；单次选区仍不跨屏。真实 Retina、多屏和全屏空间行为需要分别验证。
-
-用户配置、索引和队列默认放在 `~/.knowledge-workbench/`，正文和附件继续在用户选择的库内。不将 Windows 的本机运行配置或加密密钥搬到 Mac；模型设置在本机重新填写。iCloud 的完整下载与两机轮流编辑另行验收。
-
-启动与普通笔记操作不访问钥匙串；实际保存或读取模型密钥时才检查系统加密，并可能出现 macOS 授权提示。加密不可用时拒绝该操作，不退回明文。预览版更换签名后，系统可能要求重新确认钥匙串访问，详见 [Electron safeStorage 说明](https://www.electronjs.org/docs/latest/api/safe-storage/)。
-
-## Codex 插件
-
-桌面“设置 → 准备本地插件”生成本机路径，再按界面命令安装。建议先把应用放到固定位置，再准备插件；移动 `.app` 后重新准备，避免启动配置指向旧位置。开发运行也支持 `npm run plugin:setup`。
-
-开发插件通过 Electron 包提供的实际执行路径找到 `.app/Contents/MacOS/Electron`；成品插件直接使用应用内自带运行时。原生面板与桌面后端必须配套使用。关闭 Mac 窗口后服务仍可用；完全退出后插件可以根据已记录的本机路径唤起后台服务。
-
-## 可重放验收
+默认按当前架构构建。Apple Silicon 应用输出到 `release/mac-arm64/Knowledge Workbench.app`，Intel 输出到 `release/mac/Knowledge Workbench.app`；DMG 与 ZIP 位于 `release/`，名称包含架构。可追加 `-- --x64` 或 `-- --arm64`，但跨架构产出不代表相应硬件通过验收。
 
 ```sh
-npm run check
 npm run test:mcp
 npm run test:codex-host
 npm run test:ui
+npm run test:sidebar-subfolder
 KWB_TEST_BROWSER=chrome npm run test:panel
 KWB_TEST_BROWSER=chrome npm run test:reliability-ui
 KWB_TEST_EXE="$PWD/release/mac-arm64/Knowledge Workbench.app/Contents/MacOS/Knowledge Workbench" npm run test:ui
+KWB_TEST_EXE="$PWD/release/mac-arm64/Knowledge Workbench.app/Contents/MacOS/Knowledge Workbench" npm run test:sidebar-subfolder
 ```
 
-浏览器协议测试也可不设置 `KWB_TEST_BROWSER`，在 `npx playwright install chromium` 后使用 Playwright Chromium。桌面测试使用带中文及空格路径的系统临时库，验证 Mac 原生菜单、Command 编辑、关闭保留服务、Dock 重开、退出清理，以及桌面生成的插件配置经实际 Electron stdio 连接；全部测试在结束后清理自身临时库。
+浏览器测试也可在 `npx playwright install chromium` 后不设置 `KWB_TEST_BROWSER`，使用 Playwright Chromium。桌面测试使用带中文与空格路径的系统临时库，结束后清理自身资料与服务。`test:codex-host` 检查隔离 app-server 连接，不代表真实模型或 Codex 原生菜单点击验收。
 
-GitHub `macOS checks and preview` 工作流执行检查、浏览器回归、构建和成品桌面回归，并保存预览构建产物。新增工作流不等于远端 CI 已通过。当前实际验证结果另记于 [实施记录](implementation.md)。屏幕权限、真实输入法、实际 Codex 菜单点击、真实模型和正式 iCloud 库不由这些自动测试代替。
+GitHub `macOS checks and preview` 工作流执行检查、构建与成品桌面回归，并把 `.app` 复制到 checkout 外的临时安装目录测试。CI 工件有保留期限；日常下载以 Release 为准。完整验证状态按具体提交记录，不以工作流文件存在作为通过证据。
 
-平台行为依据：[Electron 菜单](https://www.electronjs.org/docs/latest/tutorial/menus)、[屏幕采集与授权](https://www.electronjs.org/docs/latest/api/desktop-capturer)、[electron-builder v26 Mac 打包](https://www.electron.build/v26/docs/mac/)。
+## 正式签名与公证
 
-## 2026-10-11 远端核验与主分支集成
+当前预览未配置 Developer ID 身份与公证凭据。正式分发需准备开发者计划权限、带私钥的 Developer ID Application 签名身份和公证凭据；免费账号与 ad-hoc 签名不能替代这些前提。凭据放入钥匙串或专用密钥存储，不进入源码。
 
-`805bde2edf21ef2ea93eb851ec644828e25df790` 的 push 运行 [38068956888](https://github.com/Zeen-F/knowledge-workbench/actions/runs/38068956888) 已成功；macOS 15 ARM64 的源码桌面与打包 `.app` 桌面测试分别通过。成品日志在 16:48:57–16:49:14 UTC 完成 21 项检查，包括首次启动、保存、关闭后服务保持、activate 重开、退出后重启、保存失败阻止退出、插件 Electron stdio、默认专属范围、搜索隔离和全库切换。旧运行 `38063619772` 的首窗口超时不能代表此提交的状态。
+具备条件后，启用 Hardened Runtime，使用 Developer ID 重新签名并构建，再向 Apple 提交。收到 Accepted 后还需附加并验证公证票据、通过 Gatekeeper 检查，并对最终成品重做桌面与插件验收，才能标记为已公证。
 
-工件 [11676211954](https://github.com/Zeen-F/knowledge-workbench/actions/runs/38068956888/artifacts/11676211954) 未过期，289086281 字节，SHA-256 为 `0e8408014d218f4200d49c6cfedd21875314ab99b0b0f36c9abebc6e53da7fa7`，到期时间为 2026-10-24。其中安装包版本为 alpha.2；该工件不代表后续 alpha.3 集成提交的验证结果。Windows push 运行 [38068956886](https://github.com/Zeen-F/knowledge-workbench/actions/runs/38068956886) 同样成功。部分连接器只列出 PR 事件运行，返回空列表时不能据此断言没有 CI。
-
-集成主分支 `baaa9ad` 时保留 alpha.3 与跨平台描述。下一次 macOS 成品测试将 `.app` 复制到 checkout 外、含中文与空格的临时安装目录再启动，以验证插件配置不依赖构建目录。该步骤仍不是 DMG 挂载安装、下载隔离属性或 Gatekeeper 验收。集成提交在 Linux 云环境通过 `npm run check`（41 项）与 `npm run test:mcp`（9 个工具）；本环境没有 macOS，未运行本机 Mac 安装版或真实 Codex 宿主 UI。集成后的远端结果需再次核对。
+依据：[Apple Developer ID 证书](https://developer.apple.com/help/account/certificates/create-developer-id-certificates/) · [Apple 公证要求](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)。

@@ -166,3 +166,17 @@ Windows 主工作区经 SSH 核验为 `C:\Users\86177\Desktop\File\知识库开�
 选择现有 Obsidian 仓库后，工作台默认只展示 `KnowledgeWorkbench/`。左侧“笔记范围”可切换到整个仓库；目录、计数、最近编辑、标签页与搜索跟随范围，切换前保存编辑。既有笔记不迁移；新增笔记沿用 `Cards/` 和 `Journal/`。搜索在数据库排序和结果上限之前过滤专属范围，防止大量外部笔记、收集材料或草稿挤掉正式笔记。
 
 完整检查增加至 41 项，覆盖长短中文查询、空查询、相似目录前缀和超过搜索上限的外部材料。桌面增加默认范围、计数、搜索隔离、全库切换与重启后的范围检查。自动验收全部使用临时合成库；个人库只新增专属导航页和 Obsidian 书签，原有 Markdown 的内容与位置保持一致。已在实际 Obsidian 窗口打开导航页，并从书签侧栏核对中文入口。维护记录和校验文件保存在库外忽略目录，没有将私人笔记或本机配置写入 Git。
+
+## 2026-10-12 Mac alpha.4 更新与交付
+
+主工作区更新到 `764bceac34ab09868cd8449ac8198801ba421d12`，桌面为 `0.1.0-alpha.4`，插件为 `0.1.0-alpha.5`。与发布标签 `v0.1.0-alpha.4` 的 `c7aafd5` 相比，提交身份不同，但源码树同为 `17eb4bd1f89c1e78ca792b6030318702ac7d09f7`。此次 Mac 安装包来自该主线的本机构建；Windows 既有下载包继续使用原 CI 来源与校验记录。
+
+本机格式、类型、91 项核心/服务测试和生产构建通过。最终安装版通过 22 项桌面检查与 12 项侧栏/子目录检查；9 个 MCP 工具、21 项面板协议和 8 组可靠性场景通过。已安装 alpha.5 插件缓存通过实际 stdio 连接，核对版本与真实桌面服务。测试使用临时合成库；未把正式知识库当作测试夹具。
+
+更新后的实际 Mac 窗口默认打开“我的知识库”，专属入口与侧栏功能可见。原有笔记、配置与 Obsidian 书签校验一致。DMG 挂载、ZIP 解包后的 `app.asar` 均与已验收安装版一致，本地 ad-hoc 签名校验通过；没有 Developer ID 签名或 Apple 公证。旧安装包、失败下载与临时回退副本已经清理，保留当前版本和本机验收证据，没有修改 Windows 或 Paperdesk 文件。
+
+该主线提交的 [macOS 检查与预览](https://github.com/Zeen-F/knowledge-workbench/actions/runs/38152811566)、[Windows 检查](https://github.com/Zeen-F/knowledge-workbench/actions/runs/38152811459)、[Windows 安装包验收](https://github.com/Zeen-F/knowledge-workbench/actions/runs/38152822254)均成功。Mac 的安装版专项检查与本机构建记录单列，不将 Windows 成品验收归为 Mac 结果。
+
+本次补充 README 的双平台下载、首次使用、Codex 配置与验证说明，并更新 [macOS 文档](macos.md)。Mac 分发使用独立的 `BUILDINFO-mac-arm64.json` 和 `SHA256SUMS-mac-arm64.txt`，与已有 Windows 文件并存；安装包放在 [alpha.4 Release](https://github.com/Zeen-F/knowledge-workbench/releases/tag/v0.1.0-alpha.4)，不进入 Git 源码。公开构建信息只包含版本、来源、环境、测试摘要与校验值；原始日志、个人路径、配置与截图留在本机忽略目录。
+
+本轮未调用真实模型，未完成实际 Codex 原生宿主菜单、中文输入法组合输入、iCloud 多设备同步、Intel Mac 或下载后 Gatekeeper 验收。面板协议通过与本地签名通过分别记录，不提升为这些尚未完成的验收结论。
