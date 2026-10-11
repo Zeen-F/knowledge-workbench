@@ -228,10 +228,15 @@ try {
     .poll(() => workbench.evaluate(() => globalThis.packagedSourceUrls.length))
     .toBe(1);
   const url = await workbench.evaluate(() => globalThis.packagedSourceUrls[0]);
-  assert.equal(
-    url,
-    `${paperBase}/?document=${region.ref.paperdesk.documentId}&page=3`,
-  );
+  const returnedSource = new URL(url);
+  assert.equal(returnedSource.origin, new URL(paperBase).origin);
+  assert.equal(returnedSource.pathname, "/");
+  assert.deepEqual(Object.fromEntries(returnedSource.searchParams), {
+    document: region.ref.paperdesk.documentId,
+    page: "3",
+    pdfSha256: region.ref.paperdesk.pdfSha256,
+    capture: region.ref.transferId,
+  });
   browser = await chromium.launch({
     channel: process.env.KWB_TEST_BROWSER || undefined,
   });
