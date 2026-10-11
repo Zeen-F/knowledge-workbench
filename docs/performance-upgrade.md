@@ -67,3 +67,21 @@ npm run demo -- --smoke
 - [SilverBullet 路径解析](https://github.com/silverbulletmd/silverbullet/blob/main/plug-api/lib/resolve_path.ts) 与[关系索引](https://github.com/silverbulletmd/silverbullet/blob/main/plugs/index/relation.ts)：统一解析/重写、明确歧义的思路；未照搬不同的重名优先级
 - [Dataview 索引生命周期](https://github.com/blacksmithgu/obsidian-dataview/blob/master/src/data-index/index.ts)：派生索引失效与增量更新的思路；未引入 Obsidian 依赖
 - 现有 markdown-it 的公开插件规则 API 承担 Markdown 语法判定，未新增第二套标准 Markdown 解析依赖
+
+## 2026-10-11 本地审核修复与移动基准
+
+审核 `c8b9f56` 后，修复显式 `./`、`../` 双链被根目录同名笔记抢先匹配，以及链接标签内真实图片被遗漏的问题。重命名只更新实际指向被移动笔记的引用；包含图片的链接同时保留图片目标和外层目标。链接索引版本由 2 升至 3，启动时从原 Markdown 重建派生关系，不改写正文。
+
+移动预检和执行现在各自只建立一次移动前/后的解析器，并在所有笔记之间复用；同名索引桶追加成员时也不再反复复制数组。新增 `tests/note-move.test.ts` 覆盖实际临时库中的预检、重命名、图片路径、关系和旧索引升级。
+
+Windows / Node v24.14.0 合成无链接正文测量如下。修复前为审核时单次原始样本，修复后为 3 次样本中位数；计时仅为包含解析器构建的全库链接重写循环，不包含磁盘读写。
+
+| 笔记数 | 审核提交 | 修复后 |
+| --- | ---: | ---: |
+| 500 | 419.38 ms | 8.08 ms |
+| 1,000 | 1,647.88 ms | 7.99 ms |
+| 2,000 | 6,301.43 ms | 18.63 ms |
+
+同一轮 2,000 篇临时库的完整移动预检中位数为 2,911.93 ms，实际执行为 2,484.80 ms；两者包含读盘，不能用上表的局部耗时替代。文件遍历和版本核对仍按库大小增长，移动之前仍逐篇读盘检查版本。没有使用个人知识库，也没有据此承诺真实云盘或大型库的耗时。
+
+可重放命令：`node --import tsx scripts/benchmark-note-move.mjs 500 1000 2000`。脚本创建系统临时合成库，测量共享解析器循环与真实移动预检/执行，检查预检不写盘、执行保留内容与笔记数，并关闭数据库、清理本次目录。机器可读结果保存在本机忽略目录 `.local/review/fix-move-benchmark.json`。

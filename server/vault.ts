@@ -20,15 +20,16 @@ import {
   slug,
 } from "./files.ts";
 import {
+  createLinkRewriter,
   formatMarkdown,
   markdownLinks,
   noteTitle,
   parseMarkdown,
   paperdeskBody,
-  rewriteLinks,
 } from "./markdown.ts";
 
 type Row = Record<string, any>;
+const LINK_INDEX_VERSION = "3";
 export class Vault {
   root: string;
   dataDir: string;
@@ -85,7 +86,7 @@ export class Vault {
         db
           .prepare("SELECT value FROM settings WHERE key='link-index-version'")
           .get() as Row | undefined
-      )?.value !== "2";
+      )?.value !== LINK_INDEX_VERSION;
     if (
       !fs.statSync(this.root).isDirectory() ||
       !fs.existsSync(path.join(root, ".obsidian"))
@@ -394,9 +395,9 @@ export class Vault {
     if (complete && this.rebuildRelations) {
       this.db
         .prepare(
-          "INSERT INTO settings(key,value) VALUES('link-index-version','2') ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+          "INSERT INTO settings(key,value) VALUES('link-index-version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         )
-        .run();
+        .run(LINK_INDEX_VERSION);
       this.rebuildRelations = false;
     }
     return { notes: this.list(), warnings: this.warnings };
@@ -545,13 +546,14 @@ export class Vault {
     if (!to.endsWith(".md") || fs.existsSync(target))
       throw new AppError("目标已存在或不是 Markdown 文件", 409);
     const all = this.list().filter((n) => !n.missing),
-      paths = all.map((n) => n.path);
+      paths = all.map((n) => n.path),
+      rewrite = createLinkRewriter(from, to, paths);
     const updates = all
       .map((n) => this.read(n.path))
       .filter((n) => n.owner !== "paperdesk")
       .map((n) => ({
         ...n,
-        next: rewriteLinks(n.content, from, to, n.path, paths),
+        next: rewrite(n.content, n.path),
       }))
       .filter((n) => n.path === from || n.content !== n.next);
     if (updates.some((n) => n.draft && n.draft.content !== n.content))

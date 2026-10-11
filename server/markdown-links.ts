@@ -36,9 +36,11 @@ for (const name of ["link", "image"]) {
       silent ||
       !env.collect ||
       state.src !== env.source ||
-      state.linkLevel > 0
+      (name === "link" && state.linkLevel > 0)
     )
       return accepted;
+    // Images inside a link label are real destinations. Image alt text is parsed
+    // with a separate source, so the source guard still excludes its faux links.
     const token = state.tokens
       .slice(tokenStart)
       .find((t) => t.type === (name === "image" ? "image" : "link_open"));

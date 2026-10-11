@@ -38,8 +38,11 @@ export function createNoteResolver(paths: readonly string[]) {
   const exact = new Map<string, string[]>(),
     folded = new Map<string, string[]>(),
     bases = new Map<string, string[]>();
-  const add = (map: Map<string, string[]>, key: string, value: string) =>
-    map.set(key, [...(map.get(key) || []), value]);
+  const add = (map: Map<string, string[]>, key: string, value: string) => {
+    const values = map.get(key);
+    if (values) values.push(value);
+    else map.set(key, [value]);
+  };
   for (const value of paths) {
     const key = stem(normalizeNotePath(value) || value);
     add(exact, key, value);
@@ -54,12 +57,14 @@ export function createNoteResolver(paths: readonly string[]) {
     const name = localLinkTarget(target, current, style);
     if (!name) return undefined;
     if (style === "markdown") return lookup(name);
-    const normalized = normalizeNotePath(name);
-    const direct = normalized ? lookup(normalized) : undefined;
-    if (direct) return direct;
     const local = normalizeNotePath(
       current.split("/").slice(0, -1).concat(name).join("/"),
     );
+    // Explicit relative paths must never select a same-named root note.
+    if (/^\.\.?(?:\/|$)/.test(name)) return local ? lookup(local) : undefined;
+    const normalized = normalizeNotePath(name);
+    const direct = normalized ? lookup(normalized) : undefined;
+    if (direct) return direct;
     if (local) {
       const found = lookup(local);
       if (found) return found;

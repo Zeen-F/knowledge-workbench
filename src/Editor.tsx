@@ -176,6 +176,18 @@ export const Editor = forwardRef<EditorHandle, Props>(
               current.current.onChange(update.state.sliceDoc());
           }),
           EditorView.domEventHandlers({
+            mousedown(event) {
+              if (
+                event.button === 0 &&
+                (event.target as HTMLElement).closest("a[href]")
+              ) {
+                // Keep the rendered link until click can navigate. Moving the
+                // caret here would reveal source and remove the click target.
+                event.preventDefault();
+                return true;
+              }
+              return false;
+            },
             paste(event) {
               const files = [...(event.clipboardData?.files || [])].filter(
                 (f) => f.type.startsWith("image/"),

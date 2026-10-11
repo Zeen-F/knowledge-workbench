@@ -59,50 +59,62 @@ export function links(content: string, current?: string) {
     return target ? [target] : [];
   });
 }
+/** Build one move's resolution indexes and reuse them across all note bodies. */
+export function createLinkRewriter(
+  from: string,
+  to: string,
+  paths: readonly string[],
+) {
+  const resolve = createNoteResolver(paths);
+  const resolveAfter = createNoteResolver(
+    paths.map((value) => (value === from ? to : value)),
+  );
+  return (content: string, current: string) => {
+    const isMoving = current === from;
+    const patches: { from: number; to: number; text: string }[] = [];
+    for (const link of markdownLinks(content)) {
+      const resolved = resolve(link.target, current, link.style);
+      if (link.style === "wiki") {
+        if (resolved === from)
+          patches.push({ ...link, text: to.replace(/\.md$/i, "") });
+        else if (
+          isMoving &&
+          resolved &&
+          resolveAfter(link.target, to, "wiki") !== resolved
+        )
+          patches.push({ ...link, text: resolved.replace(/\.md$/i, "") });
+        continue;
+      }
+      const local = localLinkTarget(link.target, current, "markdown");
+      if (!local || (resolved !== from && !isMoving)) continue;
+      // Relative assets and even currently missing local targets must retain their
+      // destination when the containing note moves. Root-relative URLs stay rooted.
+      const next = resolved === from ? to : local;
+      const raw = content.slice(link.from, link.to);
+      const anchor = raw.includes("#") ? raw.slice(raw.indexOf("#")) : "";
+      const relative = link.target.startsWith("/")
+        ? "/" + next
+        : path.posix.relative(
+            path.posix.dirname(isMoving ? to : current),
+            next,
+          ) || path.posix.basename(next);
+      const text =
+        relative.split("/").map(encodeURIComponent).join("/") + anchor;
+      if (text !== raw) patches.push({ ...link, text });
+    }
+    for (const patch of patches.reverse())
+      content =
+        content.slice(0, patch.from) + patch.text + content.slice(patch.to);
+    return content;
+  };
+}
+
 export function rewriteLinks(
   content: string,
   from: string,
   to: string,
   current: string,
-  paths: string[],
+  paths: readonly string[],
 ) {
-  const resolve = createNoteResolver(paths),
-    isMoving = current === from;
-  const resolveAfter = createNoteResolver(
-    paths.map((value) => (value === from ? to : value)),
-  );
-  const patches: { from: number; to: number; text: string }[] = [];
-  for (const link of markdownLinks(content)) {
-    const resolved = resolve(link.target, current, link.style);
-    if (link.style === "wiki") {
-      if (resolved === from)
-        patches.push({ ...link, text: to.replace(/\.md$/i, "") });
-      else if (
-        isMoving &&
-        resolved &&
-        resolveAfter(link.target, to, "wiki") !== resolved
-      )
-        patches.push({ ...link, text: resolved.replace(/\.md$/i, "") });
-      continue;
-    }
-    const local = localLinkTarget(link.target, current, "markdown");
-    if (!local || (resolved !== from && !isMoving)) continue;
-    // Relative assets and even currently missing local targets must retain their
-    // destination when the containing note moves. Root-relative URLs stay rooted.
-    const next = resolved === from ? to : local;
-    const raw = content.slice(link.from, link.to);
-    const anchor = raw.includes("#") ? raw.slice(raw.indexOf("#")) : "";
-    const relative = link.target.startsWith("/")
-      ? "/" + next
-      : path.posix.relative(
-          path.posix.dirname(isMoving ? to : current),
-          next,
-        ) || path.posix.basename(next);
-    const text = relative.split("/").map(encodeURIComponent).join("/") + anchor;
-    if (text !== raw) patches.push({ ...link, text });
-  }
-  for (const patch of patches.reverse())
-    content =
-      content.slice(0, patch.from) + patch.text + content.slice(patch.to);
-  return content;
+  return createLinkRewriter(from, to, paths)(content, current);
 }

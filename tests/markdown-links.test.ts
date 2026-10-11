@@ -120,3 +120,56 @@ test("unclosed inline code is bounded by Markdown blocks, including table rows",
     input.replace("[[A]]", "[[New]]"),
   );
 });
+
+test("explicit relative wiki paths never fall back to root or unrelated short names", () => {
+  const resolve = createNoteResolver([
+    "A.md",
+    "Folder/A.md",
+    "Folder/Index.md",
+    "Elsewhere/Missing.md",
+  ]);
+  assert.equal(resolve("./A#heading|alias", "Folder/Index.md"), "Folder/A.md");
+  assert.equal(resolve(".\\a.MD", "Folder/Index.md"), "Folder/A.md");
+  assert.equal(resolve("../A", "Folder/Index.md"), "A.md");
+  assert.equal(resolve("./A", "Empty/Index.md"), undefined);
+  assert.equal(resolve("./Missing", "Folder/Index.md"), undefined);
+  assert.equal(resolve("../../A", "Folder/Index.md"), undefined);
+  // Ordinary names retain their existing root-first, then unique-short-name rules.
+  assert.equal(resolve("A", "Folder/Index.md"), "A.md");
+  assert.equal(resolve("Missing", "Folder/Index.md"), "Elsewhere/Missing.md");
+});
+
+test("linked images keep real inline and reference destinations without parsing alt text as links", () => {
+  const input = [
+    '\uFEFF[![图 [[Ghost]]](<Assets/图 1.png> "图注")](https://example.org/source)',
+    "[![ref][figure]](A.md#heading)",
+    "[![outer ![alt](Ghost.png)](Assets/real.png)](https://example.org/other)",
+    "",
+    '[figure]: <Assets/ref image.png> "引用图"',
+  ].join("\r\n");
+  const found = markdownLinks(input);
+  assert.deepEqual(
+    found.map((link) => link.target),
+    [
+      "Assets/图 1.png",
+      "https://example.org/source",
+      "A.md#heading",
+      "Assets/real.png",
+      "https://example.org/other",
+      "Assets/ref image.png",
+    ],
+  );
+  for (const link of found)
+    assert.equal(input.slice(link.from, link.to), link.target);
+  assert.equal(
+    rewriteLinks(input, "Index.md", "Folder/Index.md", "Index.md", [
+      "Index.md",
+      "A.md",
+    ]),
+    input
+      .replace("Assets/图 1.png", "../Assets/%E5%9B%BE%201.png")
+      .replace("(A.md#heading)", "(../A.md#heading)")
+      .replace("(Assets/real.png)", "(../Assets/real.png)")
+      .replace("Assets/ref image.png", "../Assets/ref%20image.png"),
+  );
+});
