@@ -20,6 +20,7 @@ import {
 } from "./files.ts";
 import { openDatabase } from "./database.ts";
 import { Vault } from "./vault.ts";
+import { resolveVaultSelection } from "../desktop/vault-selection.mjs";
 import { Captures } from "./capture.ts";
 import { Processing } from "./processing.ts";
 import { Paperdesk } from "./paperdesk.ts";
@@ -50,6 +51,8 @@ export type ServiceOptions = {
   desktop?: (action: string) => Promise<any>;
 };
 export async function startService(options: ServiceOptions) {
+  // Reject invalid selections before opening a database or starting a service.
+  if (options.vaultDir) resolveVaultSelection(options.vaultDir);
   const token = options.token || randomBytes(32).toString("hex"),
     vaultId = options.vaultDir
       ? digest(fs.realpathSync(options.vaultDir))
@@ -164,7 +167,13 @@ export async function startService(options: ServiceOptions) {
         ),
       ),
       vault: vault
-        ? { name: path.basename(vault.root), root: vault.root, id: vaultId }
+        ? {
+            name: path.basename(vault.scope),
+            root: vault.root,
+            scope: vault.scope,
+            scopePath: vault.scopePath,
+            id: vaultId,
+          }
         : null,
       warnings: [
         ...(vault?.warnings || []),

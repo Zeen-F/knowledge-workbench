@@ -2,6 +2,7 @@ import { createNoteResolver } from "../shared/note-links";
 import { NoteTree } from "./NoteTree";
 import { matchesNoteSection } from "./note-navigation";
 import { RecentNotes } from "./RecentNotes";
+import { useSidebarLayout } from "./SidebarLayout";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
@@ -24,6 +25,8 @@ import {
   LoaderCircle,
   MoveRight,
   NotebookPen,
+  PanelLeftClose,
+  PanelLeftOpen,
   PanelRightClose,
   Plus,
   RefreshCw,
@@ -64,6 +67,7 @@ type Tab = {
 };
 type View = "all" | "concept" | "learning-log" | "inbox" | "review";
 export default function App() {
+  const sidebar = useSidebarLayout();
   const [status, setStatus] = useState<any>(null),
     [notes, setNotes] = useState<NoteSummary[]>([]),
     [captures, setCaptures] = useState<Capture[]>([]),
@@ -589,8 +593,14 @@ export default function App() {
     { key: "review", label: "待审稿", icon: Sparkles, count: pending },
   ];
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
+    <div
+      className={`app-shell${sidebar.collapsed ? " sidebar-collapsed" : ""}${sidebar.dragging ? " sidebar-dragging" : ""}`}
+    >
+      <aside
+        id="navigation-sidebar"
+        className="sidebar"
+        style={{ width: sidebar.width }}
+      >
         <div className="brand">
           <div className="brand-mark">
             <NotebookPen size={25} strokeWidth={1.4} />
@@ -605,7 +615,7 @@ export default function App() {
           disabled={!status?.capabilities?.chooseVault}
           title={
             status?.capabilities?.chooseVault
-              ? "选择知识库"
+              ? `选择知识库或子文件夹${status?.vault ? `\n所属知识库：${status.vault.root}\n当前目录：${status.vault.scope || status.vault.root}` : ""}`
               : "此浏览器服务已固定知识库，请在桌面应用选库"
           }
           onClick={() => {
@@ -620,6 +630,11 @@ export default function App() {
           <span>{status?.vault?.name || "选择知识库"}</span>
           <ChevronDown size={13} />
         </button>
+        {status?.vault?.scopePath && (
+          <p className="vault-scope" title={status.vault.scope}>
+            子目录 · {status.vault.scopePath}
+          </p>
+        )}
         <button
           className="new-note"
           onClick={() => {
@@ -697,6 +712,7 @@ export default function App() {
         <div className="note-list">
           <NoteTree
             notes={visible}
+            basePath={status?.vault?.scopePath || ""}
             active={["inbox", "review"].includes(view) ? "" : active}
             dirty={(p) => Boolean(tabs.current[p]?.dirty)}
             onOpen={(p) => void openNote(p)}
@@ -721,9 +737,24 @@ export default function App() {
             <Settings2 size={17} />
           </button>
         </footer>
+        {sidebar.separator}
       </aside>
       <main className="main-workspace">
         <header className="app-header">
+          <button
+            className="icon sidebar-toggle"
+            aria-label={sidebar.collapsed ? "展开导航侧栏" : "收起导航侧栏"}
+            title={sidebar.collapsed ? "展开导航侧栏" : "收起导航侧栏"}
+            aria-expanded={!sidebar.collapsed}
+            aria-controls="navigation-sidebar"
+            onClick={sidebar.toggle}
+          >
+            {sidebar.collapsed ? (
+              <PanelLeftOpen size={18} />
+            ) : (
+              <PanelLeftClose size={18} />
+            )}
+          </button>
           <div className="breadcrumbs">
             <span>我的学习空间</span>
             <span>/</span>
@@ -780,7 +811,9 @@ export default function App() {
               <FolderOpen size={17} />
               打开 Obsidian 知识库
             </button>
-            <small>选择包含 .obsidian 文件夹的知识库目录。</small>
+            <small>
+              可以选择整个 Obsidian 知识库，也可以只打开其中的资料子文件夹。
+            </small>
           </div>
         ) : view === "inbox" ? (
           <Inbox
@@ -1344,6 +1377,11 @@ export default function App() {
       )}
       {moving && t && (
         <Modal title="重命名或移动笔记" wide onClose={() => setMoving(false)}>
+          {status?.vault?.scopePath && (
+            <p className="muted">
+              当前只更新所选子文件夹内的链接。如需同时更新其他目录的引用，请先打开整个知识库。
+            </p>
+          )}
           <label>
             知识库内的新位置
             <input

@@ -2,7 +2,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import {
-  MANAGED,
   sourceRefSchema,
   transferSchema,
   type Capture,
@@ -16,6 +15,7 @@ import {
   digest,
   now,
   readUtf8,
+  safePath,
   slug,
 } from "./files.ts";
 import { formatMarkdown } from "./markdown.ts";
@@ -26,7 +26,7 @@ export class Captures {
   asset(bytes: Buffer) {
     const { mime, ext } = detectImage(bytes),
       hash = digest(bytes),
-      relative = `${MANAGED}/Assets/${hash}.${ext}`,
+      relative = `${this.vault.managed}/Assets/${hash}.${ext}`,
       file = this.vault.absolute(relative);
     if (fs.existsSync(file)) {
       if (digest(fs.readFileSync(file)) !== hash)
@@ -84,7 +84,7 @@ export class Captures {
       ...supplied,
       ...asset,
     });
-    const relative = `${MANAGED}/Inbox/${ref.capturedAt.slice(0, 10)}--${slug(title)}--${id.slice(0, 8)}.md`;
+    const relative = `${this.vault.managed}/Inbox/${ref.capturedAt.slice(0, 10)}--${slug(title)}--${id.slice(0, 8)}.md`;
     if (requestId && fs.existsSync(this.vault.absolute(relative))) {
       const existing = this.vault.read(relative);
       if (existing.metadata.kb_capture_request !== requestHash)
@@ -161,7 +161,9 @@ export class Captures {
         ? JSON.parse(row.value).subdir || "Paperdesk"
         : "Paperdesk",
       base = `${subdir}/Exports`;
-    const root = this.vault.absolute(base);
+    // The existing Paperdesk exchange remains in the parent vault; only its
+    // validated export packages are read here. Imported content stays in scope.
+    const root = safePath(this.vault.root, base);
     if (!fs.existsSync(root)) return { imported: 0, pending: [] as string[] };
     let imported = 0;
     const pending: string[] = [];
@@ -173,7 +175,8 @@ export class Captures {
       )
         continue;
       try {
-        const manifestPath = this.vault.absolute(
+        const manifestPath = safePath(
+          this.vault.root,
           `${base}/${entry.name}/manifest.json`,
         );
         if (!fs.existsSync(manifestPath)) {
@@ -193,7 +196,8 @@ export class Captures {
           continue;
         let image: string | undefined;
         if (manifest.image) {
-          const file = this.vault.absolute(
+          const file = safePath(
+              this.vault.root,
               `${base}/${entry.name}/${manifest.image.file}`,
             ),
             bytes = fs.readFileSync(file);

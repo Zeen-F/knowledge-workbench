@@ -2,7 +2,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import {
-  MANAGED,
   draftProposalSchema,
   type BatchSnapshot,
   type BatchPreview,
@@ -223,7 +222,7 @@ export class Processing {
           controller.signal,
           job.snapshot.researchProfile,
         );
-        const extractionPath = `${MANAGED}/Drafts/Extraction-${job.id}-${item.id}.md`;
+        const extractionPath = `${this.vault.managed}/Drafts/Extraction-${job.id}-${item.id}.md`;
         atomicWrite(
           this.vault.absolute(extractionPath),
           formatMarkdown(
@@ -415,7 +414,7 @@ export class Processing {
     // Stable identity survives a process exit between the file write and SQLite insertion.
     const hex = digest(jobId + ":" + requestId),
       id = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`,
-      relative = `${MANAGED}/Drafts/${slug(proposal.title)}--${id.slice(0, 8)}.md`;
+      relative = `${this.vault.managed}/Drafts/${slug(proposal.title)}--${id.slice(0, 8)}.md`;
     const submissionFile = path.join(
       this.vault.dataDir,
       "submissions",
@@ -550,7 +549,9 @@ export class Processing {
   rebuildProposals() {
     for (const n of this.vault
       .list()
-      .filter((n) => !n.missing && n.path.startsWith(`${MANAGED}/Drafts/`))) {
+      .filter(
+        (n) => !n.missing && n.path.startsWith(`${this.vault.managed}/Drafts/`),
+      )) {
       try {
         const doc = this.vault.read(n.path),
           p = doc.metadata.kb_proposal as any;
@@ -712,7 +713,7 @@ export class Processing {
     const target =
       p.action === "amend"
         ? p.targetPath!
-        : `${MANAGED}/${p.noteType === "learning-log" ? "Journal" : "Cards"}/${slug(p.title)}--${p.id}.md`;
+        : `${this.vault.managed}/${p.noteType === "learning-log" ? "Journal" : "Cards"}/${slug(p.title)}--${p.id}.md`;
     const current = fs.existsSync(this.vault.absolute(target))
       ? this.vault.read(target)
       : null;

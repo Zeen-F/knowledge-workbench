@@ -9,6 +9,7 @@ type Branch = {
 };
 type TreeProps = {
   notes: NoteSummary[];
+  basePath?: string;
   active: string;
   dirty: (path: string) => boolean;
   onOpen: (path: string) => void;
@@ -106,13 +107,17 @@ function TreeFolder(
     </details>
   );
 }
-export function NoteTree({ notes, ...props }: TreeProps) {
+export function NoteTree({ notes, basePath = "", ...props }: TreeProps) {
+  const base = basePath ? basePath.replace(/\/$/, "") + "/" : "";
   const root = useMemo(() => {
     const root: Branch = { notes: [], children: new Map(), count: 0 };
     for (const note of notes) {
       let branch = root;
       branch.count++;
-      for (const folder of note.path.split("/").slice(0, -1)) {
+      for (const folder of note.path
+        .slice(base.length)
+        .split("/")
+        .slice(0, -1)) {
         if (!branch.children.has(folder))
           branch.children.set(folder, {
             notes: [],
@@ -125,11 +130,11 @@ export function NoteTree({ notes, ...props }: TreeProps) {
       branch.notes.push(note);
     }
     return root;
-  }, [notes]);
+  }, [notes, base]);
   return (
     <BranchNotes
       branch={root}
-      prefix=""
+      prefix={base}
       compact={notes.length > 300}
       {...props}
     />

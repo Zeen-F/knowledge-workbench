@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { resolveVaultSelection } from "../desktop/vault-selection.mjs";
 import {
   MANAGED,
   sourceRefSchema,
@@ -32,6 +33,9 @@ type Row = Record<string, any>;
 const LINK_INDEX_VERSION = "3";
 export class Vault {
   root: string;
+  scope: string;
+  scopePath: string;
+  managed: string;
   dataDir: string;
   db: DatabaseSync;
   warnings: string[] = [];
@@ -77,7 +81,15 @@ export class Vault {
     ].join(":");
   }
   constructor(root: string, dataDir: string, db: DatabaseSync) {
-    this.root = fs.realpathSync(root);
+    const selection = resolveVaultSelection(root);
+    this.root = selection.root;
+    this.scope = selection.scope;
+    this.scopePath = selection.scopePath;
+    this.managed =
+      path.basename(this.scope).toLowerCase() === MANAGED.toLowerCase() &&
+      this.scopePath
+        ? this.scopePath
+        : path.posix.join(this.scopePath, MANAGED);
     this.dataDir = path.resolve(dataDir);
     this.db = db;
     this.refreshFullTextRows();
@@ -87,21 +99,24 @@ export class Vault {
           .prepare("SELECT value FROM settings WHERE key='link-index-version'")
           .get() as Row | undefined
       )?.value !== LINK_INDEX_VERSION;
-    if (
-      !fs.statSync(this.root).isDirectory() ||
-      !fs.existsSync(path.join(root, ".obsidian"))
-    )
-      throw new AppError("请选择包含 .obsidian 文件夹的知识库");
     fs.mkdirSync(dataDir, { recursive: true });
     if (inside(this.root, fs.realpathSync(dataDir)))
       throw new AppError("应用索引必须保存在知识库之外");
     for (const dir of ["Inbox", "Cards", "Journal", "Drafts", "Assets"])
-      fs.mkdirSync(safePath(this.root, `${MANAGED}/${dir}`), {
+      fs.mkdirSync(this.absolute(`${this.managed}/${dir}`), {
         recursive: true,
       });
   }
   absolute(relative: string) {
-    return safePath(this.root, relative);
+    const file = safePath(this.root, relative);
+    if (!inside(this.scope, file))
+      throw new AppError(
+        "此文件不在当前选定的子文件夹内，请切换目录后打开",
+        403,
+        "OUTSIDE_SCOPE",
+      );
+    // Also reject junctions that point at another folder inside the parent vault.
+    return safePath(this.scope, portable(path.relative(this.scope, file)));
   }
   summary(row: Row): NoteSummary {
     return {
@@ -142,7 +157,7 @@ export class Vault {
       tags: Array.isArray(metadata.tags) ? metadata.tags.map(String) : [],
       owner: managed
         ? "paperdesk"
-        : relative.startsWith(`${MANAGED}/`)
+        : relative.startsWith(`${this.managed}/`)
           ? "workbench"
           : "external",
       content,
@@ -179,7 +194,7 @@ export class Vault {
         n.owner,
       );
     this.clearFullText(relative);
-    if (!relative.startsWith(`${MANAGED}/Drafts/`)) {
+    if (!relative.startsWith(`${this.managed}/Drafts/`)) {
       const result = this.db
         .prepare("INSERT INTO notes_fts(path,title,body,tags) VALUES(?,?,?,?)")
         .run(
@@ -339,7 +354,7 @@ export class Vault {
         candidates.push({ file, relative });
       }
     };
-    walk(this.root);
+    walk(this.scope);
     const auditLimit = Math.max(
       1,
       Math.min(1024, Math.floor(options.auditLimit || 128)),
@@ -507,7 +522,7 @@ export class Vault {
   create(title: string, noteType = "concept", content?: string) {
     const id = randomUUID(),
       folder = noteType === "learning-log" ? "Journal" : "Cards";
-    const relative = `${MANAGED}/${folder}/${slug(title)}--${id.slice(0, 8)}.md`;
+    const relative = `${this.managed}/${folder}/${slug(title)}--${id.slice(0, 8)}.md`;
     const body =
       content ||
       `# ${title}\n\n${noteType === "learning-log" ? "## 本次问题\n\n\n## 过程与观察\n\n\n## 当前判断\n\n\n## 下一步与连接" : "## 核心问题与结论\n\n\n## 机制、模型或推导\n\n\n## 例子与边界\n\n\n## 尚未解决\n\n\n## 来源与连接"}\n\n`;

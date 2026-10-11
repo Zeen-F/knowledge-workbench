@@ -18,6 +18,7 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { cropRect } from "./geometry.mjs";
 import { preparePlugin } from "./plugin-setup.mjs";
+import { resolveVaultSelection } from "./vault-selection.mjs";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const profileDir = path.resolve(
@@ -86,6 +87,7 @@ async function stopService() {
   });
 }
 async function start(vaultDir) {
+  if (vaultDir) vaultDir = resolveVaultSelection(vaultDir).scope;
   const preferredPort = service
     ? Number(new URL(service.baseUrl).port)
     : readPreferences().port;
@@ -137,13 +139,12 @@ async function start(vaultDir) {
           else if (data.action === "choose-vault") {
             await flush();
             const choice = await dialog.showOpenDialog(window, {
-              title: "选择 Obsidian 知识库",
+              title: "选择 Obsidian 知识库或子文件夹",
               properties: ["openDirectory"],
             });
             if (!choice.canceled) {
               const vaultDir = choice.filePaths[0];
-              if (!fs.existsSync(path.join(vaultDir, ".obsidian")))
-                throw new Error("请选择包含 .obsidian 的知识库");
+              resolveVaultSelection(vaultDir);
               setTimeout(
                 () =>
                   void start(vaultDir).catch((error) =>
@@ -233,15 +234,12 @@ async function request(method, route, body) {
 async function chooseVault() {
   await flush();
   const result = await dialog.showOpenDialog(window, {
-    title: "选择 Obsidian 知识库文件夹",
+    title: "选择 Obsidian 知识库或子文件夹",
     properties: ["openDirectory"],
   });
   if (result.canceled) return;
   const vaultDir = result.filePaths[0];
-  if (!fs.existsSync(path.join(vaultDir, ".obsidian")))
-    throw new Error(
-      "此文件夹没有 .obsidian。请先用 Obsidian 创建一个空库，或选择已有知识库。",
-    );
+  resolveVaultSelection(vaultDir);
   const previous = service;
   try {
     await start(vaultDir);
