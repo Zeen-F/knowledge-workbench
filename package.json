@@ -1,7 +1,7 @@
 {
   "name": "knowledge-workbench",
   "version": "0.1.0-alpha.3",
-  "description": "Windows 模拟 IC 学习、写作与知识整理工作台",
+  "description": "Windows 与 macOS 模拟 IC 学习、写作与知识整理工作台",
   "private": true,
   "type": "module",
   "main": "desktop/main.mjs",
@@ -19,8 +19,8 @@
     "test": "node --import tsx --test tests/*.test.ts",
     "check": "npm run lint && npm run typecheck && npm run test && npm run build",
     "test:ui": "node scripts/test-ui.mjs",
-    "desktop:pack": "npm run build && electron-builder --win --x64 --dir --publish never",
-    "desktop:dist": "npm run build && electron-builder --win --x64 --publish never",
+    "desktop:pack": "npm run build && electron-builder --dir --publish never",
+    "desktop:dist": "npm run build && electron-builder --publish never",
     "plugin:setup": "node scripts/setup-plugin.mjs",
     "plugin:install": "node scripts/setup-plugin.mjs --install",
     "test:mcp": "node --import tsx scripts/test-mcp.mjs",
@@ -28,7 +28,11 @@
     "test:paperdesk": "node --import tsx scripts/test-paperdesk.mjs",
     "test:packaged-paperdesk": "node scripts/test-packaged-paperdesk.mjs",
     "test:codex-host": "node --import tsx scripts/test-codex-host.mjs",
-    "test:capture": "node scripts/test-capture.mjs"
+    "test:capture": "node scripts/test-capture.mjs",
+    "desktop:pack:win": "npm run build && electron-builder --win --x64 --dir --publish never",
+    "desktop:dist:win": "npm run build && electron-builder --win --x64 --publish never",
+    "desktop:pack:mac": "npm run build && electron-builder --mac --dir --publish never",
+    "desktop:dist:mac": "npm run build && electron-builder --mac --publish never"
   },
   "build": {
     "appId": "com.zeen.knowledgeworkbench",
@@ -60,6 +64,17 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "deleteAppDataOnUninstall": false
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.productivity",
+      "artifactName": "KnowledgeWorkbench-${version}-mac-${arch}.${ext}",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "notarize": false
     }
   },
   "dependencies": {

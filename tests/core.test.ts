@@ -160,6 +160,37 @@ test("Chinese full-text and short substring search; unreadable file keeps old in
   assert.equal(vault.search("边界").length, 1);
   assert.equal(vault.warnings.length, 1);
 });
+test("workspace search filters before the result limit for full-text and short Chinese queries", (t) => {
+  const { vault } = fixture(t);
+  for (let i = 0; i < 110; i++) {
+    atomicWrite(vault.absolute(`外部/笔记-${i}.md`), "# 跨导效率\n跨导效率\n");
+    atomicWrite(
+      vault.absolute(`KnowledgeWorkbench/Inbox/材料-${i}.md`),
+      "# 跨导效率\n",
+    );
+    atomicWrite(
+      vault.absolute(`KnowledgeWorkbench/Drafts/草稿-${i}.md`),
+      "# 跨导效率\n",
+    );
+  }
+  atomicWrite(
+    vault.absolute("KnowledgeWorkbenchOther/跨导效率.md"),
+    "# 跨导效率\n",
+  );
+  vault.scan();
+  const note = vault.create(
+    "专属空间",
+    "concept",
+    "# 专属空间\n跨导效率\n" + "条件说明。".repeat(200),
+  );
+  for (const q of ["跨导效率", "跨导", ""]) {
+    assert.deepEqual(
+      vault.search(q, "workbench").map((n) => n.path),
+      [note.path],
+    );
+    assert.ok(vault.search(q, "vault").length >= 100);
+  }
+});
 test("move updates incoming and outgoing links, preserves recovery record", (t) => {
   const { vault } = fixture(t);
   atomicWrite(vault.absolute("旧/概念.md"), "# 概念\n\n![图](../图片.png)\n");

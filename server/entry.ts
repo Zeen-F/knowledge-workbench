@@ -51,4 +51,7 @@ if (parent) {
       });
     }
   });
+  // The packaged helper can load more slowly than the development runtime.
+  // Tell the desktop when its message listener is ready before accepting start.
+  parent.postMessage({ type: "initialized" });
 }

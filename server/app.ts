@@ -217,8 +217,13 @@ export async function startService(options: ServiceOptions) {
       ? paperdesk!.save(relative, content, hash)
       : vault!.save(relative, content, hash);
   app.get("/api/notes", (req, res) => {
-    const q = String(req.query.q || "");
-    res.json(q ? vault!.search(q) : vault!.list());
+    const { q, scope } = z
+      .object({
+        q: z.string().default(""),
+        scope: z.enum(["workbench", "vault"]).default("vault"),
+      })
+      .parse(req.query);
+    res.json(vault!.search(q, scope));
   });
   app.post("/api/refresh", (_req, res) => {
     const scan = vault!.scan(),

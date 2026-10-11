@@ -28,6 +28,7 @@ import {
 } from "./client";
 import { assetUrl, renderMarkdown } from "./markdown";
 import { Editor } from "./Editor";
+import { captureShortcut, primaryModifier } from "./platform";
 import {
   recoveryKey,
   readRecovery,
@@ -370,7 +371,7 @@ export function Inbox({
             框选截图
             <small>
               {capabilities.capture
-                ? "Ctrl + Alt + S"
+                ? captureShortcut
                 : "需要桌面服务 · 可导入图片"}
             </small>
           </span>
@@ -609,7 +610,7 @@ export function Inbox({
             </select>
           </label>
           <label>
-            参考笔记（按 Ctrl 多选，可不选）
+            参考笔记（按 {primaryModifier} 多选，可不选）
             <select
               multiple
               size={4}

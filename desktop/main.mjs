@@ -10,6 +10,7 @@ import {
   desktopCapturer,
   screen,
   shell,
+  systemPreferences,
 } from "electron";
 import fs from "node:fs";
 import os from "node:os";
@@ -18,8 +19,10 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { cropRect } from "./geometry.mjs";
 import { preparePlugin } from "./plugin-setup.mjs";
+import { createCredentials } from "./credentials.mjs";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const credentials = createCredentials(safeStorage);
 const profileDir = path.resolve(
   process.env.KWB_PROFILE || path.join(os.homedir(), ".knowledge-workbench"),
 );
@@ -30,6 +33,8 @@ let window,
   worker,
   service,
   closing = false,
+  quitting = false,
+  flushingClose = false,
   captureActive = false;
 const overlayMap = new Map(),
   pendingFlush = new Map();
@@ -96,7 +101,7 @@ async function start(vaultDir) {
   });
   worker = child;
   child.stderr?.on("data", (bytes) => {
-    if (!app.isPackaged) process.stderr.write(bytes);
+    process.stderr.write(bytes);
   });
   service = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -104,14 +109,26 @@ async function start(vaultDir) {
       reject(new Error("本地服务启动超时"));
     }, 30000);
     child.on("message", async (data) => {
+      if (data.type === "initialized") {
+        child.postMessage({
+          type: "start",
+          options: {
+            vaultDir,
+            port: preferredPort,
+            dataDir: profileDir,
+            distDir: path.join(root, "dist"),
+            // Availability is checked only when the user requests credentials.
+            // A Keychain prompt must not block startup before a window exists.
+            secureStorage: true,
+          },
+        });
+      }
       if (data.type === "crypto") {
         try {
-          if (!safeStorage.isEncryptionAvailable())
-            throw new Error("系统加密暂不可用，密钥未保存");
           const value =
             data.action === "encrypt"
-              ? safeStorage.encryptString(data.value).toString("base64")
-              : safeStorage.decryptString(Buffer.from(data.value, "base64"));
+              ? credentials.encrypt(data.value)
+              : credentials.decrypt(data.value);
           child.postMessage({ type: "crypto-result", id: data.id, value });
         } catch (error) {
           child.postMessage({
@@ -183,16 +200,6 @@ async function start(vaultDir) {
           "请重启应用。编辑中的本机草稿会保留。",
         );
       }
-    });
-    child.postMessage({
-      type: "start",
-      options: {
-        vaultDir,
-        port: preferredPort,
-        dataDir: profileDir,
-        distDir: path.join(root, "dist"),
-        secureStorage: safeStorage.isEncryptionAvailable(),
-      },
     });
   });
   writeJson(runtimeFile, {
@@ -270,30 +277,43 @@ function endCapture() {
 async function beginCapture() {
   if (captureActive) return;
   if (!service?.vaultId) throw new Error("请先选择知识库");
+  const permissionMessage =
+    "请在系统设置 → 隐私与安全性 → 屏幕与系统音频录制中允许 Knowledge Workbench 录制屏幕，然后退出并重新打开应用。开发模式请允许 Electron。";
+  if (
+    process.platform === "darwin" &&
+    ["denied", "restricted"].includes(
+      systemPreferences.getMediaAccessStatus("screen"),
+    )
+  )
+    throw new Error(permissionMessage);
   captureActive = true;
   window?.hide();
   try {
     await new Promise((resolve) => setTimeout(resolve, 250));
     const displays = screen.getAllDisplays();
-    const sources = await desktopCapturer.getSources({
-      types: ["screen"],
-      thumbnailSize: {
-        width: Math.max(
-          ...displays.map((d) => Math.ceil(d.size.width * d.scaleFactor)),
-        ),
-        height: Math.max(
-          ...displays.map((d) => Math.ceil(d.size.height * d.scaleFactor)),
-        ),
-      },
-      fetchWindowIcons: false,
-    });
-    // Freeze all images before showing overlays; cropping uses the actual returned size.
-    const frames = displays.map((display) => {
-      const source = sources.find((s) => s.display_id === String(display.id));
-      if (!source || source.thumbnail.isEmpty())
-        throw new Error("此显示器无法采集，请重试");
-      return { display, image: source.thumbnail };
-    });
+    // One shared maximum size upscales the lower-DPI screen on mixed displays.
+    // Request each display's physical size, and freeze every frame before overlays.
+    const frames = await Promise.all(
+      displays.map(async (display) => {
+        const sources = await desktopCapturer.getSources({
+          types: ["screen"],
+          thumbnailSize: {
+            width: Math.ceil(display.size.width * display.scaleFactor),
+            height: Math.ceil(display.size.height * display.scaleFactor),
+          },
+          fetchWindowIcons: false,
+        });
+        const source = sources.find((s) => s.display_id === String(display.id));
+        if (!source || source.thumbnail.isEmpty())
+          throw new Error("此显示器无法采集，请重试");
+        return { display, image: source.thumbnail };
+      }),
+    );
+    if (
+      process.platform === "darwin" &&
+      systemPreferences.getMediaAccessStatus("screen") !== "granted"
+    )
+      throw new Error(permissionMessage);
     for (const { display, image } of frames) {
       const overlay = new BrowserWindow({
         ...display.bounds,
@@ -314,6 +334,9 @@ async function beginCapture() {
         },
       });
       overlay.setMenuBarVisibility(false);
+      if (process.platform === "darwin") {
+        overlay.setAlwaysOnTop(true, "screen-saver");
+      }
       overlayMap.set(overlay.webContents.id, { overlay, display, image });
       await overlay.loadFile(path.join(root, "desktop/capture.html"));
       overlay.setBounds(display.bounds);
@@ -409,6 +432,12 @@ ipcMain.handle("workbench:request", async (event, input) => {
 
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
+  app.on("activate", () => {
+    if (!window || window.isDestroyed()) return;
+    if (window.isMinimized()) window.restore();
+    window.show();
+    window.focus();
+  });
   app.on("second-instance", (_event, argv) => {
     if (argv.includes("--background")) return;
     if (window?.isMinimized()) window.restore();
@@ -418,7 +447,28 @@ else {
   app
     .whenReady()
     .then(async () => {
-      Menu.setApplicationMenu(null);
+      Menu.setApplicationMenu(
+        process.platform === "darwin"
+          ? Menu.buildFromTemplate([
+              { role: "appMenu" },
+              {
+                label: "文件",
+                submenu: [{ role: "close", label: "关闭窗口" }],
+              },
+              { role: "editMenu", label: "编辑" },
+              {
+                label: "显示",
+                submenu: [
+                  { role: "resetZoom" },
+                  { role: "zoomIn" },
+                  { role: "zoomOut" },
+                  { role: "togglefullscreen" },
+                ],
+              },
+              { role: "windowMenu", label: "窗口" },
+            ])
+          : null,
+      );
       await start(process.env.KWB_VAULT || readPreferences().vaultDir);
       window = new BrowserWindow({
         width: 1390,
@@ -450,8 +500,14 @@ else {
       window.on("close", (event) => {
         if (closing) return;
         event.preventDefault();
+        if (flushingClose) return;
+        flushingClose = true;
         void flush()
           .then(async () => {
+            if (process.platform === "darwin" && !quitting) {
+              window.hide();
+              return;
+            }
             closing = true;
             globalShortcut.unregisterAll();
             endCapture();
@@ -459,15 +515,21 @@ else {
             window.destroy();
             app.quit();
           })
-          .catch((error) =>
-            dialog.showMessageBox(window, {
+          .catch((error) => {
+            quitting = false;
+            window.show();
+            window.focus();
+            return dialog.showMessageBox(window, {
               type: "warning",
               title: "笔记尚未保存",
               message: error.message,
               detail: "请处理保存提示后再关闭。输入已保留在本机草稿中。",
               buttons: ["返回编辑"],
-            }),
-          );
+            });
+          })
+          .finally(() => {
+            flushingClose = false;
+          });
       });
       await window.loadURL(service.baseUrl);
       if (!process.argv.includes("--background")) window.show();
@@ -482,18 +544,20 @@ else {
       )
         dialog.showMessageBox(window, {
           type: "info",
-          message: "Ctrl + Alt + S 已被其他程序占用",
+          message: `${process.platform === "darwin" ? "⌘ + ⌥ + S" : "Ctrl + Alt + S"} 已被其他程序占用`,
           detail: "仍可从收集箱点击“框选截图”。",
           buttons: ["知道了"],
         });
     })
     .catch(async (error) => {
+      console.error("Knowledge Workbench startup failed:", error);
       dialog.showErrorBox("知识工作台未能启动", error.message);
       closing = true;
       await stopService();
       app.quit();
     });
   app.on("before-quit", (event) => {
+    quitting = true;
     if (window && !window.isDestroyed() && !closing) {
       event.preventDefault();
       window.close();

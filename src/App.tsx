@@ -1,4 +1,5 @@
 import { NoteTree } from "./NoteTree";
+import { primaryModifier } from "./platform";
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
@@ -37,6 +38,7 @@ import type {
   NoteSummary,
   Proposal,
 } from "../shared/contracts";
+import { MANAGED } from "../shared/contracts";
 import {
   api,
   fileData,
@@ -67,6 +69,7 @@ export default function App() {
     [jobs, setJobs] = useState<Job[]>([]),
     [proposals, setProposals] = useState<Proposal[]>([]);
   const [view, setView] = useState<View>("all"),
+    [scope, setScope] = useState<"workbench" | "vault">("workbench"),
     [active, setActive] = useState(""),
     [tabOrder, setTabOrder] = useState<string[]>([]),
     [query, setQuery] = useState(""),
@@ -239,6 +242,7 @@ export default function App() {
         if (recovered) notify("已恢复未提交草稿，请核对后保存。");
       }
       setActive(path);
+      if (!path.startsWith(`${MANAGED}/`)) setScope("vault");
       setView("all");
       setQuery("");
       setResults(null);
@@ -375,7 +379,10 @@ export default function App() {
     setResults(null);
     const timer = setTimeout(() => {
       if (query.trim())
-        void api<NoteSummary[]>("GET", "/notes?q=" + encodeURIComponent(query))
+        void api<NoteSummary[]>(
+          "GET",
+          "/notes?q=" + encodeURIComponent(query) + "&scope=" + scope,
+        )
           .then((r) => {
             if (current) setResults(r);
           })
@@ -388,7 +395,7 @@ export default function App() {
       current = false;
       clearTimeout(timer);
     };
-  }, [query]);
+  }, [query, scope]);
   useEffect(() => {
     let current = true;
     setRelations(null);
@@ -413,6 +420,7 @@ export default function App() {
       setCreate(false);
       setNewTitle("");
       await refresh();
+      setScope("workbench");
       await openNote(note.path);
     } catch (e) {
       notify((e as Error).message, true);
@@ -538,11 +546,15 @@ export default function App() {
   }
   const t = tabs.current[active],
     pending = proposals.filter((p) => p.status === "pending").length;
+  const inScope = (n: NoteSummary) =>
+    !n.missing &&
+    !n.path.includes("/Drafts/") &&
+    !n.path.includes("/Inbox/") &&
+    (scope === "vault" || n.path.startsWith(`${MANAGED}/`));
+  const scopedNotes = notes.filter(inScope);
   const visible = (results || notes).filter(
     (n) =>
-      !n.missing &&
-      !n.path.includes("/Drafts/") &&
-      !n.path.includes("/Inbox/") &&
+      inScope(n) &&
       (view === "concept"
         ? n.noteType === "concept"
         : view === "learning-log"
@@ -554,20 +566,19 @@ export default function App() {
       key: "all",
       label: "全部笔记",
       icon: BookOpen,
-      count: notes.filter((n) => !n.missing && !n.path.includes("/Drafts/"))
-        .length,
+      count: scopedNotes.length,
     },
     {
       key: "concept",
       label: "知识卡",
       icon: FilePenLine,
-      count: notes.filter((n) => n.noteType === "concept").length,
+      count: scopedNotes.filter((n) => n.noteType === "concept").length,
     },
     {
       key: "learning-log",
       label: "学习记录",
       icon: Clock3,
-      count: notes.filter((n) => n.noteType === "learning-log").length,
+      count: scopedNotes.filter((n) => n.noteType === "learning-log").length,
     },
     { key: "inbox", label: "收集箱", icon: InboxIcon, count: captures.length },
     { key: "review", label: "待审稿", icon: Sparkles, count: pending },
@@ -604,6 +615,33 @@ export default function App() {
           <span>{status?.vault?.name || "选择知识库"}</span>
           <ChevronDown size={13} />
         </button>
+        {status?.vault && (
+          <label className="note-scope">
+            <span>笔记范围</span>
+            <select
+              aria-label="笔记范围"
+              value={scope}
+              onChange={(event) => {
+                const next = event.target.value as "workbench" | "vault";
+                void flushAll()
+                  .then(() => {
+                    navigate("all");
+                    setActive("");
+                    setQuery("");
+                    setResults(null);
+                    setScope(next);
+                  })
+                  .catch((error) => notify(error.message, true));
+              }}
+            >
+              <option value="workbench">我的知识库</option>
+              <option value="vault">整个 Obsidian 仓库</option>
+            </select>
+            <small title={`${status.vault.root}/${MANAGED}`}>
+              专属位置：{MANAGED}
+            </small>
+          </label>
+        )}
         <button
           className="new-note"
           onClick={() => {
@@ -614,13 +652,15 @@ export default function App() {
           disabled={!status?.vault}
         >
           <Plus size={16} />
-          写一篇笔记<kbd>Ctrl N</kbd>
+          写一篇笔记<kbd>{primaryModifier} N</kbd>
         </button>
         <label className="search-box">
           <Search size={15} />
           <input
             aria-label="搜索知识库"
-            placeholder="搜索笔记与想法"
+            placeholder={
+              scope === "workbench" ? "搜索我的知识库" : "搜索整个仓库"
+            }
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
@@ -681,6 +721,7 @@ export default function App() {
         <div className="note-list">
           <NoteTree
             notes={visible}
+            basePath={scope === "workbench" ? MANAGED : ""}
             active={["inbox", "review"].includes(view) ? "" : active}
             dirty={(p) => Boolean(tabs.current[p]?.dirty)}
             onOpen={(p) => void openNote(p)}
@@ -791,27 +832,29 @@ export default function App() {
         ) : (
           <>
             <div className="tab-strip">
-              {tabOrder.map((p) => (
-                <div key={p} className={active === p ? "active" : ""}>
-                  <button
-                    onClick={() => {
-                      openGeneration.current++;
-                      setActive(p);
-                    }}
-                  >
-                    <FileText size={13} />
-                    <span>{tabs.current[p]?.note.title}</span>
-                    {tabs.current[p]?.dirty && <b>•</b>}
-                  </button>
-                  <button
-                    className="tab-close"
-                    aria-label={`关闭 ${tabs.current[p]?.note.title}`}
-                    onClick={() => void closeTab(p)}
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
-              ))}
+              {tabOrder
+                .filter((p) => scope === "vault" || p.startsWith(`${MANAGED}/`))
+                .map((p) => (
+                  <div key={p} className={active === p ? "active" : ""}>
+                    <button
+                      onClick={() => {
+                        openGeneration.current++;
+                        setActive(p);
+                      }}
+                    >
+                      <FileText size={13} />
+                      <span>{tabs.current[p]?.note.title}</span>
+                      {tabs.current[p]?.dirty && <b>•</b>}
+                    </button>
+                    <button
+                      className="tab-close"
+                      aria-label={`关闭 ${tabs.current[p]?.note.title}`}
+                      onClick={() => void closeTab(p)}
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))}
               <button
                 className="icon"
                 aria-label="新建笔记"
@@ -824,7 +867,11 @@ export default function App() {
               <div className="start-page">
                 <span className="eyebrow">YOUR THINKING, IN PROGRESS</span>
                 <h1>今天，想弄清什么？</h1>
-                <p>从一个问题、一张电路图，或一段还未成形的想法开始。</p>
+                <p>
+                  {scope === "workbench"
+                    ? `这里是你的专属学习空间，笔记保存在 Obsidian 的 ${MANAGED} 文件夹。`
+                    : "正在浏览整个 Obsidian 仓库，也可以切回“我的知识库”专注记录。"}
+                </p>
                 <div className="start-actions">
                   <button
                     onClick={() => {
@@ -847,7 +894,7 @@ export default function App() {
                 </div>
                 <div className="section-label">
                   <span>最近编辑</span>
-                  <span>{notes.length} 篇笔记</span>
+                  <span>{visible.length} 篇笔记</span>
                 </div>
                 <div className="recent-notes">
                   {visible.slice(0, 7).map((n) => (
@@ -1018,7 +1065,7 @@ export default function App() {
                             .catch((e) => notify(e.message, true))
                         }
                       >
-                        Ctrl S
+                        {primaryModifier} S
                       </button>
                     </span>
                   </footer>
