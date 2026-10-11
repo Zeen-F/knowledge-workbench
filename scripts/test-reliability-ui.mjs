@@ -21,7 +21,10 @@ const checks = [],
   errors = [];
 try {
   browser = await chromium.launch({
-    channel: process.env.KWB_TEST_BROWSER || "msedge",
+    executablePath: process.env.KWB_TEST_EXECUTABLE,
+    channel:
+      process.env.KWB_TEST_BROWSER ||
+      (process.platform === "win32" ? "msedge" : undefined),
     headless: true,
   });
   const page = await browser.newPage({

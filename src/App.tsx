@@ -1,5 +1,8 @@
+import { createNoteResolver } from "../shared/note-links";
 import { NoteTree } from "./NoteTree";
-import { useEffect, useRef, useState } from "react";
+import { matchesNoteSection } from "./note-navigation";
+import { RecentNotes } from "./RecentNotes";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -157,7 +160,9 @@ export default function App() {
       api<Proposal[]>("GET", "/proposals"),
     ]);
     if (generation !== refreshGeneration.current) return;
-    setNotes(n);
+    setNotes((previous) =>
+      JSON.stringify(previous) === JSON.stringify(n) ? previous : n,
+    );
     setCaptures(c);
     setJobs(j);
     setProposals(p);
@@ -359,12 +364,32 @@ export default function App() {
         setCreate(true);
       }
     };
+    let resuming = false;
+    const resume = () => {
+      if (
+        resuming ||
+        document.visibilityState === "hidden" ||
+        !statusRef.current?.vault
+      )
+        return;
+      resuming = true;
+      void api("POST", "/refresh")
+        .then(() => refresh())
+        .catch((error) => notify(error.message, true))
+        .finally(() => {
+          resuming = false;
+        });
+    };
+    window.addEventListener("focus", resume);
+    document.addEventListener("visibilitychange", resume);
     window.addEventListener("beforeunload", before);
     window.addEventListener("keydown", key);
     return () => {
       clearInterval(timer);
       unregister?.();
       captureOff?.();
+      window.removeEventListener("focus", resume);
+      document.removeEventListener("visibilitychange", resume);
       window.removeEventListener("beforeunload", before);
       window.removeEventListener("keydown", key);
       for (const timer of Object.values(timers.current)) clearTimeout(timer);
@@ -445,7 +470,8 @@ export default function App() {
     }
   }
   function followLink(target: string) {
-    if (target.startsWith("kb:"))
+    const style = target.startsWith("kb:") ? "wiki" : "markdown";
+    if (style === "wiki")
       try {
         target = decodeURIComponent(target.slice(3));
       } catch {}
@@ -453,13 +479,11 @@ export default function App() {
       void openExternal(target);
       return;
     }
-    target = target.split("#")[0];
-    const normalized = target.replace(/^\//, "").replace(/\.md$/, "");
-    const found =
-      notes.find((n) => n.path.replace(/\.md$/, "") === normalized) ||
-      notes.find(
-        (n) => n.path.split("/").at(-1)?.replace(/\.md$/, "") === normalized,
-      );
+    const normalized = target.split("#")[0];
+    const resolved = createNoteResolver(
+      notes.filter((n) => !n.missing).map((n) => n.path),
+    )(target, active, style);
+    const found = notes.find((n) => n.path === resolved);
     if (found) void openNote(found.path);
     else {
       setQuery(normalized);
@@ -538,36 +562,28 @@ export default function App() {
   }
   const t = tabs.current[active],
     pending = proposals.filter((p) => p.status === "pending").length;
-  const visible = (results || notes).filter(
-    (n) =>
-      !n.missing &&
-      !n.path.includes("/Drafts/") &&
-      !n.path.includes("/Inbox/") &&
-      (view === "concept"
-        ? n.noteType === "concept"
-        : view === "learning-log"
-          ? n.noteType === "learning-log"
-          : true),
+  const visible = useMemo(
+    () => (results || notes).filter((n) => matchesNoteSection(n, view)),
+    [results, notes, view],
   );
   const sections = [
     {
       key: "all",
       label: "全部笔记",
       icon: BookOpen,
-      count: notes.filter((n) => !n.missing && !n.path.includes("/Drafts/"))
-        .length,
+      count: notes.filter((n) => matchesNoteSection(n, "all")).length,
     },
     {
       key: "concept",
       label: "知识卡",
       icon: FilePenLine,
-      count: notes.filter((n) => n.noteType === "concept").length,
+      count: notes.filter((n) => matchesNoteSection(n, "concept")).length,
     },
     {
       key: "learning-log",
       label: "学习记录",
       icon: Clock3,
-      count: notes.filter((n) => n.noteType === "learning-log").length,
+      count: notes.filter((n) => matchesNoteSection(n, "learning-log")).length,
     },
     { key: "inbox", label: "收集箱", icon: InboxIcon, count: captures.length },
     { key: "review", label: "待审稿", icon: Sparkles, count: pending },
@@ -845,20 +861,10 @@ export default function App() {
                     <ArrowUpRight size={17} />
                   </button>
                 </div>
-                <div className="section-label">
-                  <span>最近编辑</span>
-                  <span>{notes.length} 篇笔记</span>
-                </div>
-                <div className="recent-notes">
-                  {visible.slice(0, 7).map((n) => (
-                    <button key={n.path} onClick={() => void openNote(n.path)}>
-                      <FileText size={16} />
-                      <span>{n.title}</span>
-                      <small>{shortDate(n.updatedAt)}</small>
-                      <ArrowUpRight size={14} />
-                    </button>
-                  ))}
-                </div>
+                <RecentNotes
+                  notes={visible}
+                  onOpen={(path) => void openNote(path)}
+                />
               </div>
             ) : (
               <div className="writing-layout">
@@ -1081,9 +1087,10 @@ export default function App() {
                               onClick={() =>
                                 link.kind === "asset"
                                   ? setAttachment(link)
-                                  : followLink(
-                                      link.to_ref.replace(/^\[\[|\]\]$/g, ""),
-                                    )
+                                  : link.resolved
+                                    ? void openNote(link.to_ref)
+                                    : (setQuery(link.to_ref),
+                                      notify("已按链接内容查找笔记"))
                               }
                             >
                               <Link2 size={12} />

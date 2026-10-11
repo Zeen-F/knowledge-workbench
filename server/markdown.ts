@@ -1,5 +1,8 @@
 import path from "node:path";
 import YAML from "yaml";
+import { markdownLinks } from "./markdown-links.ts";
+import { createNoteResolver, localLinkTarget } from "../shared/note-links.ts";
+export { markdownLinks } from "./markdown-links.ts";
 
 export function parseMarkdown(content: string, strict = true) {
   const match = content.match(/^\uFEFF?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
@@ -47,10 +50,14 @@ export function noteTitle(
       path.posix.basename(relative, ".md"),
   );
 }
-export function links(content: string) {
-  return [...content.matchAll(/!?\[\[([^\]|#]+)(?:[^\]]*)\]\]/g)].map(
-    (m) => m[1],
-  );
+export function links(content: string, current?: string) {
+  return markdownLinks(content).flatMap((link) => {
+    const target =
+      link.style === "markdown"
+        ? localLinkTarget(link.target, current || "", "markdown")
+        : localLinkTarget(link.target, "", "wiki");
+    return target ? [target] : [];
+  });
 }
 export function rewriteLinks(
   content: string,
@@ -59,78 +66,43 @@ export function rewriteLinks(
   current: string,
   paths: string[],
 ) {
-  // Literal examples and unknown HTML stay byte-for-byte intact on a move.
-  // Apply the resolver only to prose, including YAML wiki-link properties.
-  const literal =
-    /(^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^ {0,3}\2[^\S\n]*(?:\n|$)|(?![\s\S])))|(^ {4}[^\n]*(?:\n|$))|(`+)[\s\S]*?\4|<!--[\s\S]*?-->/gm;
-  let result = "",
-    cursor = 0;
-  for (const match of content.matchAll(literal)) {
-    result +=
-      rewriteProse(
-        content.slice(cursor, match.index),
-        from,
-        to,
-        current,
-        paths,
-      ) + match[0];
-    cursor = match.index! + match[0].length;
-  }
-  return result + rewriteProse(content.slice(cursor), from, to, current, paths);
-}
-
-function rewriteProse(
-  content: string,
-  from: string,
-  to: string,
-  current: string,
-  paths: string[],
-) {
-  const isMoving = current === from,
-    oldDir = path.posix.dirname(current),
-    newDir = path.posix.dirname(isMoving ? to : current);
-  const oldStem = from.replace(/\.md$/i, ""),
-    base = path.posix.basename(oldStem);
-  content = content.replace(
-    /(!?)\[\[([^\]|#]+)([^\]]*)\]\]/g,
-    (full, bang: string, name: string, tail: string) => {
-      const n = name.replace(/\.md$/i, "");
-      const exact =
-        n === oldStem ||
-        path.posix.normalize(path.posix.join(oldDir, n)) === oldStem;
-      const unique =
-        n === base &&
-        paths.filter((p) => path.posix.basename(p, ".md") === base).length ===
-          1;
-      if (exact || unique)
-        return `${bang}[[${to.replace(/\.md$/i, "")}${tail}]]`;
-      return full;
-    },
+  const resolve = createNoteResolver(paths),
+    isMoving = current === from;
+  const resolveAfter = createNoteResolver(
+    paths.map((value) => (value === from ? to : value)),
   );
-  return content.replace(
-    /(!?\[[^\]\n]*\]\()([^\s)]+)([^)]*\))/g,
-    (full, pre: string, url: string, post: string) => {
-      if (
-        /^[a-z][\w+.-]*:/i.test(url) ||
-        url.startsWith("#") ||
-        url.startsWith("/")
+  const patches: { from: number; to: number; text: string }[] = [];
+  for (const link of markdownLinks(content)) {
+    const resolved = resolve(link.target, current, link.style);
+    if (link.style === "wiki") {
+      if (resolved === from)
+        patches.push({ ...link, text: to.replace(/\.md$/i, "") });
+      else if (
+        isMoving &&
+        resolved &&
+        resolveAfter(link.target, to, "wiki") !== resolved
       )
-        return full;
-      const cut = url.indexOf("#"),
-        loc = cut < 0 ? url : url.slice(0, cut),
-        anchor = cut < 0 ? "" : url.slice(cut);
-      let decoded: string;
-      try {
-        decoded = decodeURIComponent(loc);
-      } catch {
-        return full;
-      }
-      const resolved = path.posix.normalize(path.posix.join(oldDir, decoded));
-      const next = resolved === from ? to : resolved;
-      if (resolved !== from && !isMoving) return full;
-      const rel =
-        path.posix.relative(newDir, next) || path.posix.basename(next);
-      return `${pre}${rel.split("/").map(encodeURIComponent).join("/")}${anchor}${post}`;
-    },
-  );
+        patches.push({ ...link, text: resolved.replace(/\.md$/i, "") });
+      continue;
+    }
+    const local = localLinkTarget(link.target, current, "markdown");
+    if (!local || (resolved !== from && !isMoving)) continue;
+    // Relative assets and even currently missing local targets must retain their
+    // destination when the containing note moves. Root-relative URLs stay rooted.
+    const next = resolved === from ? to : local;
+    const raw = content.slice(link.from, link.to);
+    const anchor = raw.includes("#") ? raw.slice(raw.indexOf("#")) : "";
+    const relative = link.target.startsWith("/")
+      ? "/" + next
+      : path.posix.relative(
+          path.posix.dirname(isMoving ? to : current),
+          next,
+        ) || path.posix.basename(next);
+    const text = relative.split("/").map(encodeURIComponent).join("/") + anchor;
+    if (text !== raw) patches.push({ ...link, text });
+  }
+  for (const patch of patches.reverse())
+    content =
+      content.slice(0, patch.from) + patch.text + content.slice(patch.to);
+  return content;
 }

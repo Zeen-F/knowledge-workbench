@@ -24,7 +24,11 @@ export const recoveryRecordSchema = z.discriminatedUnion("kind", [
 export type RecoveryRecord = z.infer<typeof recoveryRecordSchema>;
 export type StoredRecovery = { record: RecoveryRecord; hash: string };
 
-export const SERVICE_FEATURES = { reliability: 1, recovery: 1 } as const;
+export const SERVICE_FEATURES = {
+  reliability: 1,
+  recovery: 1,
+  researchProfiles: 1,
+} as const;
 export function requirePanelFeatures(status: {
   features?: Record<string, number>;
 }) {

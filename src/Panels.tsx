@@ -17,7 +17,22 @@ import {
   X,
 } from "lucide-react";
 import { diffLines } from "diff";
-import type { Capture, Job, NoteSummary, Proposal } from "../shared/contracts";
+import type {
+  BatchPreview,
+  Capture,
+  Job,
+  NoteSummary,
+  Proposal,
+} from "../shared/contracts";
+import {
+  GENERAL_PROFILE,
+  RESEARCH_FOCUS,
+  researchSelectionSchema,
+  researchProfileLabel,
+  snapshotResearchProfile,
+  type ResearchSelection,
+} from "../shared/research-profiles";
+import { researchChecks } from "../shared/research-checks";
 import {
   api,
   fileData,
@@ -145,16 +160,48 @@ export function Inbox({
       initial ? "已恢复本机草稿，尚未写入知识库" : "原始想法会随材料保留。",
     ),
     [batch, setBatch] = useState(false),
-    [executor, setExecutor] = useState<"api" | "codex">(
-      window.workbench?.panel ? "codex" : "api",
-    ),
+    [executor, setExecutor] = useState<"api" | "codex">("codex"),
+    [researchSelection, setResearchSelection] =
+      useState<ResearchSelection>(GENERAL_PROFILE),
+    [preview, setPreview] = useState<BatchPreview | null>(null),
     [instruction, setInstruction] = useState(""),
     [references, setReferences] = useState<string[]>([]),
     [busy, setBusy] = useState(false);
   const [deliveries, setDeliveries] = useState<Record<string, string>>({});
   const sending = useRef(new Set<string>());
+  const batchBusy = useRef(false);
+  const selectionTouched = useRef(false);
+  const previewKey = JSON.stringify({
+    selected,
+    references,
+    executor,
+    instruction,
+    researchSelection,
+  });
+  const currentPreviewKey = useRef(previewKey);
+  currentPreviewKey.current = previewKey;
+  useEffect(() => {
+    setPreview(null);
+  }, [previewKey]);
+  useEffect(() => {
+    void api("GET", "/settings")
+      .then((settings) => {
+        if (selectionTouched.current) return;
+        const selection = researchSelectionSchema.safeParse(
+          settings.researchSelection,
+        );
+        setResearchSelection(
+          selection.success ? selection.data : GENERAL_PROFILE,
+        );
+      })
+      .catch(() => {});
+  }, []);
+  function selectResearch(selection: ResearchSelection) {
+    selectionTouched.current = true;
+    setResearchSelection(selection);
+  }
   const batchPrompt = (id: string) =>
-    `请使用知识工作台插件处理共享批次 ${id}。读取指定批次和其中图片，保持材料顺序；整理为主题知识卡与学习记录，保留来源、适用条件、原始想法和待核对项。通过提交草稿工具返回结果，正式笔记由我在软件中审核。`;
+    `请使用知识工作台插件处理共享批次 ${id}。先读取批次；若含 researchProfile，按该批固定版本和 focus 整理，不改用其他配置。读取指定批次和其中图片，保持材料顺序；保留来源、适用条件、原始想法和待核对项。通过提交草稿工具返回结果，正式笔记由我在软件中审核。`;
   async function sendBatch(id: string) {
     if (sending.current.has(id) || !window.workbench?.sendToCodex) return;
     sending.current.add(id);
@@ -285,7 +332,30 @@ export function Inbox({
       [next[from], next[to]] = [next[to], next[from]];
       return next;
     });
+  const preparePreview = async () => {
+    if (batchBusy.current) return;
+    batchBusy.current = true;
+    const requestKey = previewKey;
+    setBusy(true);
+    try {
+      const result = await api<BatchPreview>("POST", "/jobs/preview", {
+        sourceIds: selected,
+        referencePaths: references,
+        executor,
+        instruction,
+        researchSelection,
+      });
+      if (currentPreviewKey.current === requestKey) setPreview(result);
+    } catch (e) {
+      notify((e as Error).message, true);
+    } finally {
+      batchBusy.current = false;
+      setBusy(false);
+    }
+  };
   const start = async () => {
+    if (!preview || batchBusy.current) return;
+    batchBusy.current = true;
     setBusy(true);
     try {
       const job = await api<Job>("POST", "/jobs", {
@@ -293,6 +363,8 @@ export function Inbox({
         referencePaths: references,
         executor,
         instruction,
+        researchSelection,
+        expectedPreviewHash: preview.previewHash,
       });
       if (executor === "api") await api("POST", `/jobs/${job.id}/run`);
       setBatch(false);
@@ -304,8 +376,10 @@ export function Inbox({
           : "批次已共享，请到 Codex 发起整理",
       );
     } catch (e) {
+      setPreview(null);
       notify((e as Error).message, true);
     } finally {
+      batchBusy.current = false;
       setBusy(false);
     }
   };
@@ -502,6 +576,9 @@ export function Inbox({
                     {j.items.filter((i) => i.state === "done").length}/
                     {j.items.length} 已提取
                   </small>
+                  <small>
+                    {researchProfileLabel(j.snapshot.researchProfile)}
+                  </small>
                   {j.error && <p className="error-text">{j.error}</p>}
                 </div>
                 <div className="job-actions">
@@ -583,7 +660,7 @@ export function Inbox({
                   className="icon"
                   aria-label="上移材料"
                   onClick={() => reorder(id, -1)}
-                  disabled={!i}
+                  disabled={busy || !i}
                 >
                   <ArrowUp size={14} />
                 </button>
@@ -591,7 +668,7 @@ export function Inbox({
                   className="icon"
                   aria-label="下移材料"
                   onClick={() => reorder(id, 1)}
-                  disabled={i === selected.length - 1}
+                  disabled={busy || i === selected.length - 1}
                 >
                   <ArrowDown size={14} />
                 </button>
@@ -602,6 +679,7 @@ export function Inbox({
             执行方式
             <select
               value={executor}
+              disabled={busy}
               onChange={(e) => setExecutor(e.target.value as "api" | "codex")}
             >
               <option value="api">软件内调用模型 API</option>
@@ -609,9 +687,62 @@ export function Inbox({
             </select>
           </label>
           <label>
+            整理配置
+            <select
+              value={researchSelection.id}
+              disabled={busy}
+              onChange={(e) =>
+                selectResearch({
+                  id: e.target.value as ResearchSelection["id"],
+                  focus: researchSelection.focus,
+                })
+              }
+            >
+              <option value="general">通用整理（默认）</option>
+              <option value="analog-ic-research">模拟 IC 科研</option>
+            </select>
+          </label>
+          {researchSelection.id === "analog-ic-research" && (
+            <>
+              <label>
+                科研重点
+                <select
+                  value={researchSelection.focus}
+                  disabled={busy}
+                  onChange={(e) =>
+                    selectResearch({
+                      ...researchSelection,
+                      focus: e.target.value as ResearchSelection["focus"],
+                    })
+                  }
+                >
+                  {Object.entries(RESEARCH_FOCUS).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className="muted">
+                保留原文、用户假设、AI
+                推断、单位与实验条件。配置随本批固定；短笔记不强制填满栏目。上次交付的选择会在本库沿用。
+              </p>
+              <details className="research-profile-preview">
+                <summary>
+                  查看科研指令 · v
+                  {snapshotResearchProfile(researchSelection)!.version}
+                </summary>
+                <pre>
+                  {snapshotResearchProfile(researchSelection)!.instructions}
+                </pre>
+              </details>
+            </>
+          )}
+          <label>
             参考笔记（按 Ctrl 多选，可不选）
             <select
               multiple
+              disabled={busy}
               size={4}
               value={references}
               onChange={(e) =>
@@ -636,10 +767,47 @@ export function Inbox({
             这次重点关注什么？
             <textarea
               value={instruction}
+              disabled={busy}
               onChange={(e) => setInstruction(e.target.value)}
               placeholder="例如：比较这些推导的适用条件，保留我还不确定的地方。"
             />
           </label>
+          {preview && (
+            <section className="batch-preview" aria-label="交付预览">
+              <h3>核对后再交付</h3>
+              <p>
+                {researchProfileLabel(preview.researchProfile)} ·{" "}
+                {preview.sources.length} 份材料 · {preview.references.length}{" "}
+                篇参考笔记
+              </p>
+              <p className="muted">
+                只交付下方快照和所列图片。预览不会发送给模型；结果仍需你审核。任何输入变化都需重新预览。
+              </p>
+              {preview.sources
+                .filter((source) => source.ref.assetPath)
+                .map((source) => (
+                  <figure key={source.id}>
+                    <img
+                      src={assetUrl(source.ref.assetPath!)}
+                      alt={source.ref.title}
+                    />
+                    <figcaption>{source.ref.title}</figcaption>
+                  </figure>
+                ))}
+              <ResearchHints
+                profile={preview.researchProfile}
+                text={
+                  preview.sources.map((source) => source.text).join("\n") +
+                  "\n" +
+                  preview.references.map((note) => note.content).join("\n")
+                }
+              />
+              <details open>
+                <summary>完整交付快照（含科研指令、正文、来源与版本）</summary>
+                <pre>{JSON.stringify(preview, null, 2)}</pre>
+              </details>
+            </section>
+          )}
           <footer className="modal-footer">
             <button
               className="secondary"
@@ -650,17 +818,47 @@ export function Inbox({
             </button>
             <button
               className="primary"
-              onClick={() => void start()}
+              onClick={() => void (preview ? start() : preparePreview())}
               disabled={busy}
             >
               {busy
                 ? "正在准备…"
-                : executor === "api"
-                  ? "生成待审草稿"
-                  : "共享给 Codex"}
+                : !preview
+                  ? "预览交付内容"
+                  : executor === "api"
+                    ? "确认发送并生成草稿"
+                    : "确认共享给 Codex"}
             </button>
           </footer>
         </Modal>
+      )}
+    </div>
+  );
+}
+
+function ResearchHints({
+  profile,
+  text,
+}: {
+  profile: Job["snapshot"]["researchProfile"];
+  text: string;
+}) {
+  const checks = researchChecks(profile, text);
+  if (!profile) return null;
+  return (
+    <div className="uncertainties research-checks">
+      <strong>确定性检查提示</strong>
+      <p className="muted">
+        仅检查文字中的有限模式，不代表已验证科学结论或模型质量。
+      </p>
+      {checks.length ? (
+        <ul>
+          {checks.map((check, index) => (
+            <li key={check.code + index}>{check.message}</li>
+          ))}
+        </ul>
+      ) : (
+        <p>未触发有限规则，仍需人工核对来源、条件与推断。</p>
       )}
     </div>
   );
@@ -886,6 +1084,9 @@ export function Review({
           )}
           <div className="review-grid">
             <aside className="source-review">
+              <p className="muted">
+                {researchProfileLabel(job?.snapshot.researchProfile)}
+              </p>
               <h3>原始材料</h3>
               {job?.snapshot.sources
                 .filter((s) => proposal.sourceIds.includes(s.id))
@@ -918,6 +1119,10 @@ export function Review({
                   </ul>
                 </div>
               )}
+              <ResearchHints
+                profile={job?.snapshot.researchProfile}
+                text={text}
+              />
             </aside>
             <section className="proposal-editor">
               <header>

@@ -6,6 +6,11 @@ import os from "node:os";
 import assert from "node:assert/strict";
 import { removeTestDirectory } from "./test-cleanup.mjs";
 import { startService } from "../server/app.ts";
+import { preparePlugin } from "../desktop/plugin-setup.mjs";
+import {
+  portableResearchSkill,
+  RESEARCH_CORE,
+} from "../shared/research-profiles.ts";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kwb-mcp-")),
   vault = path.join(root, "vault");
@@ -16,6 +21,39 @@ const client = new Client({
   version: "1.0.0",
 });
 try {
+  const packaged = preparePlugin({
+    root: process.cwd(),
+    profileDir: root,
+    executable: process.execPath,
+  });
+  const packagedPlugin = path.join(
+    packaged.marketplace,
+    "plugins",
+    "knowledge-workbench",
+  );
+  const manifest = JSON.parse(
+    fs.readFileSync(
+      path.join(packagedPlugin, ".codex-plugin/plugin.json"),
+      "utf8",
+    ),
+  );
+  assert.equal(manifest.skills, "./skills/");
+  assert.equal(
+    fs.readFileSync(
+      path.join(packagedPlugin, "skills/analog-ic-research/SKILL.md"),
+      "utf8",
+    ),
+    portableResearchSkill(),
+  );
+  for (const reference of ["paper", "experiment"])
+    assert.ok(
+      fs.existsSync(
+        path.join(
+          packagedPlugin,
+          `skills/analog-ic-research/references/${reference}.md`,
+        ),
+      ),
+    );
   fs.writeFileSync(
     path.join(root, "runtime.json"),
     JSON.stringify({
@@ -28,7 +66,14 @@ try {
       title: "合成材料",
       text: "只测试插件协议，不表示科学结论。",
     }),
-    job = service.processing.create([capture.id], [], "codex", "保留来源");
+    job = service.processing.create([capture.id], [], "codex", "保留来源", {
+      id: "analog-ic-research",
+      focus: "experiment",
+    });
+  const privateCapture = service.captures.add({
+    title: "未共享",
+    text: "PRIVATE_SOURCE_SENTINEL",
+  });
   await client.connect(
     new StdioClientTransport({
       command: process.execPath,
@@ -103,6 +148,21 @@ try {
   assert.equal((await call("workbench_list_batches")).items[0].id, job.id);
   const batch = await call("workbench_read_batch", { batchId: job.id });
   assert.equal(batch.inputHash, job.snapshot.inputHash);
+  assert.deepEqual(batch.researchProfile, job.snapshot.researchProfile);
+  assert.equal(
+    batch.researchProfile.instructions.split(RESEARCH_CORE).length - 1,
+    1,
+  );
+  assert.equal(JSON.stringify(batch).includes(privateCapture.id), false);
+  assert.equal(
+    (
+      await client.callTool({
+        name: "workbench_read_material",
+        arguments: { batchId: job.id, sourceId: privateCapture.id },
+      })
+    ).isError,
+    true,
+  );
   assert.match(
     (
       await call("workbench_read_material", {
@@ -142,7 +202,7 @@ try {
       passed: true,
       tools: tools.map((t) => t.name),
       verification:
-        "real SDK stdio transport, synthetic inputs; not a Codex host run",
+        "real SDK stdio transport + copied native skill package + scoped immutable research profile, synthetic inputs; not a Codex host run",
     }),
   );
 } finally {

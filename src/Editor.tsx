@@ -1,12 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
-import { Compartment, EditorState, StateField } from "@codemirror/state";
-import {
-  Decoration,
-  EditorView,
-  keymap,
-  WidgetType,
-  type DecorationSet,
-} from "@codemirror/view";
+import { Compartment, EditorState } from "@codemirror/state";
+import { EditorView, keymap } from "@codemirror/view";
 import {
   defaultKeymap,
   history,
@@ -18,7 +12,7 @@ import { markdown } from "@codemirror/lang-markdown";
 import { syntaxHighlighting, HighlightStyle } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
-import { renderMarkdown, renderMath } from "./markdown";
+import { previewField } from "./editor-preview";
 const defaultHighlightStyle = HighlightStyle.define([
   { tag: tags.heading, color: "var(--ink)", fontWeight: "600" },
   { tag: tags.strong, fontWeight: "700" },
@@ -51,162 +45,6 @@ type Props = {
 };
 
 const retained = new Map<string, { content: string; json: any }>();
-
-class Rendered extends WidgetType {
-  constructor(
-    readonly html: string,
-    readonly sourceStart: number,
-    readonly block = false,
-  ) {
-    super();
-  }
-  eq(other: Rendered) {
-    return other.html === this.html && other.sourceStart === this.sourceStart;
-  }
-  toDOM(view: EditorView) {
-    const node = document.createElement(this.block ? "div" : "span");
-    node.className = this.block ? "md-rendered" : "md-inline";
-    node.innerHTML = this.block
-      ? this.html
-      : this.html.replace(/^<p>/, "").replace(/<\/p>\s*$/, "");
-    node.addEventListener("dblclick", (event) => {
-      if ((event.target as HTMLElement).closest("a")) return;
-      view.dispatch({ selection: { anchor: this.sourceStart } });
-      view.focus();
-    });
-    return node;
-  }
-  ignoreEvent() {
-    return false;
-  }
-}
-
-function previewField(file: string) {
-  const create = (state: EditorState) => {
-    const content = state.doc.toString(),
-      ranges: any[] = [],
-      occupied: { from: number; to: number }[] = [];
-    const active = (from: number, to: number) =>
-      state.selection.ranges.some((r) => r.from <= to && r.to >= from);
-    const taken = (from: number, to: number) =>
-      occupied.some((r) => r.from <= to && r.to >= from);
-    const block = (from: number, to: number, html: string) => {
-      occupied.push({ from, to });
-      if (!active(from, to))
-        ranges.push(
-          Decoration.replace({
-            widget: new Rendered(html, from, true),
-            block: true,
-          }).range(from, to),
-        );
-    };
-    const fm = content.match(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---/);
-    if (fm)
-      block(
-        0,
-        fm[0].length,
-        '<div class="properties-fold">◇ 笔记属性 <span>双击编辑</span></div>',
-      );
-    for (const match of content.matchAll(
-      /^(```+|~~~+)[^\n]*\n[\s\S]*?^\1\s*$/gm,
-    )) {
-      const from = match.index!,
-        to = from + match[0].length;
-      if (!taken(from, to)) block(from, to, renderMarkdown(match[0], file));
-    }
-    for (const match of content.matchAll(/^\$\$\s*\n([\s\S]*?)\n\$\$\s*$/gm)) {
-      const from = match.index!,
-        to = from + match[0].length;
-      if (!taken(from, to)) block(from, to, renderMath(match[1], true));
-    }
-    for (let i = 1; i <= state.doc.lines; i++) {
-      const line = state.doc.line(i);
-      if (taken(line.from, line.to)) continue;
-      if (
-        i < state.doc.lines &&
-        line.text.includes("|") &&
-        /^\s*\|?\s*:?-{3,}/.test(state.doc.line(i + 1).text)
-      ) {
-        let end = i + 1;
-        while (
-          end < state.doc.lines &&
-          state.doc.line(end + 1).text.includes("|") &&
-          state.doc.line(end + 1).text.trim()
-        )
-          end++;
-        const last = state.doc.line(end);
-        block(
-          line.from,
-          last.to,
-          renderMarkdown(state.doc.sliceString(line.from, last.to), file),
-        );
-        i = end;
-        continue;
-      }
-      if (
-        /^\s*!\[.*\]\(.*\)\s*$/.test(line.text) ||
-        /^\s*!\[\[.+\]\]\s*$/.test(line.text)
-      ) {
-        block(line.from, line.to, renderMarkdown(line.text, file));
-        continue;
-      }
-      const heading = line.text.match(/^(#{1,6})\s+/);
-      if (heading) {
-        ranges.push(
-          Decoration.line({
-            class: `cm-heading cm-h${heading[1].length}`,
-          }).range(line.from),
-        );
-        if (!active(line.from, line.to))
-          ranges.push(
-            Decoration.replace({}).range(
-              line.from,
-              line.from + heading[0].length,
-            ),
-          );
-      }
-      if (/^>\s/.test(line.text))
-        ranges.push(Decoration.line({ class: "cm-quote" }).range(line.from));
-      if (active(line.from, line.to)) continue;
-      for (const m of line.text.matchAll(/(?<!\$)\$([^$\n]+)\$(?!\$)/g)) {
-        const from = line.from + m.index!;
-        ranges.push(
-          Decoration.replace({
-            widget: new Rendered(renderMath(m[1], false), from),
-          }).range(from, from + m[0].length),
-        );
-      }
-      for (const m of line.text.matchAll(/\*\*([^*]+)\*\*/g)) {
-        const from = line.from + m.index!;
-        ranges.push(
-          Decoration.replace({}).range(from, from + 2),
-          Decoration.mark({ class: "cm-strong" }).range(
-            from + 2,
-            from + m[0].length - 2,
-          ),
-          Decoration.replace({}).range(
-            from + m[0].length - 2,
-            from + m[0].length,
-          ),
-        );
-      }
-      for (const m of line.text.matchAll(/(?<!!)\[\[([^\]]+)\]\]/g)) {
-        const from = line.from + m.index!;
-        ranges.push(
-          Decoration.replace({
-            widget: new Rendered(renderMarkdown(m[0], file), from),
-          }).range(from, from + m[0].length),
-        );
-      }
-    }
-    return Decoration.set(ranges, true);
-  };
-  return StateField.define<DecorationSet>({
-    create,
-    update: (_value, tr) => create(tr.state),
-    provide: (f) => EditorView.decorations.from(f),
-  });
-}
 
 export const Editor = forwardRef<EditorHandle, Props>(
   function Editor(props, ref) {

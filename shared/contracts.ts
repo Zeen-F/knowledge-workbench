@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ResearchProfileSnapshot } from "./research-profiles.ts";
 
 export const PRODUCT = "knowledge-workbench";
 export const API_VERSION = 1;
@@ -94,8 +95,13 @@ export type BatchSnapshot = {
   instruction: string;
   sources: Capture[];
   references: { path: string; hash: string; title: string; content: string }[];
+  researchProfile?: ResearchProfileSnapshot;
   inputHash: string;
 };
+export type BatchPreview = Omit<
+  BatchSnapshot,
+  "schema" | "id" | "createdAt" | "inputHash"
+> & { previewHash: string };
 export const draftProposalSchema = z
   .object({
     title: z.string().min(1).max(200),

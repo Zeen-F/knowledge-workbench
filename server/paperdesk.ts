@@ -176,6 +176,12 @@ export class Paperdesk {
         409,
         "SOURCE_CHANGED",
       );
-    return `${p.baseUrl}/?document=${encodeURIComponent(source.documentId)}&page=${source.page}`;
+    const query = new URLSearchParams({
+      document: source.documentId,
+      page: String(source.page),
+      pdfSha256: source.pdfSha256,
+      ...(ref.transferId ? { capture: ref.transferId } : {}),
+    });
+    return `${p.baseUrl}/?${query}`;
   }
 }

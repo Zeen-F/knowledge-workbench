@@ -255,7 +255,7 @@ nav button:hover,
   min-height: 70px;
   flex: 1;
 }
-.note-list > button {
+.note-list .note-row {
   display: flex;
   width: 100%;
   text-align: left;
@@ -270,7 +270,7 @@ nav button:hover,
   margin-top: 3px;
   flex-shrink: 0;
 }
-.note-list > button > div {
+.note-list .note-row > div {
   min-width: 0;
   flex: 1;
 }
@@ -1332,6 +1332,39 @@ nav button:hover,
   margin-top: 26px;
   padding-top: 18px;
 }
+.research-profile-preview,
+.batch-preview {
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px solid var(--border, #dbe4d0);
+  border-radius: 8px;
+}
+.research-profile-preview summary,
+.batch-preview summary {
+  cursor: pointer;
+  font-size: 12px;
+}
+.research-profile-preview pre,
+.batch-preview pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 300px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.batch-preview figure {
+  margin: 12px 0;
+}
+.batch-preview img {
+  max-width: 100%;
+  max-height: 260px;
+  object-fit: contain;
+}
+.research-checks {
+  margin: 14px 0;
+  font-size: 12px;
+}
 .form-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1659,4 +1692,13 @@ nav button:hover,
 .note-folder .note-folder > div {
   padding-left: 7px;
   margin-left: 7px;
+}
+
+.note-folder summary small {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.note-list .note-more {
+  font-size: 11px;
+  color: var(--accent);
 }

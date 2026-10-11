@@ -21,7 +21,7 @@ import {
 } from "./files.ts";
 import {
   formatMarkdown,
-  links,
+  markdownLinks,
   noteTitle,
   parseMarkdown,
   paperdeskBody,
@@ -34,10 +34,58 @@ export class Vault {
   dataDir: string;
   db: DatabaseSync;
   warnings: string[] = [];
+  private scanSignatures = new Map<string, string>();
+  private scanAuditOffset = 0;
+  private rebuildRelations: boolean;
+  private ftsRows = new Map<string, (number | bigint)[]>();
+  private ftsDataVersion = -1;
+  private refreshFullTextRows() {
+    const version = (this.db.prepare("PRAGMA data_version").get() as Row)
+      .data_version;
+    if (version === this.ftsDataVersion) return;
+    this.ftsRows.clear();
+    for (const row of this.db
+      .prepare("SELECT rowid,path FROM notes_fts")
+      .all() as Row[]) {
+      const rows = this.ftsRows.get(row.path) || [];
+      rows.push(row.rowid);
+      this.ftsRows.set(row.path, rows);
+    }
+    this.ftsDataVersion = version;
+  }
+  private clearFullText(relative: string) {
+    // Another connection invalidates the row map. The path guard also prevents
+    // a recycled rowid from removing an unrelated note's derived search row.
+    this.refreshFullTextRows();
+    const remove = this.db.prepare(
+      "DELETE FROM notes_fts WHERE rowid=? AND path=?",
+    );
+    for (const rowid of this.ftsRows.get(relative) || [])
+      remove.run(rowid, relative);
+    this.ftsRows.delete(relative);
+  }
+  private fileSignature(file: string) {
+    const stat = fs.statSync(file, { bigint: true });
+    return [
+      stat.dev,
+      stat.ino,
+      stat.size,
+      stat.mtimeNs,
+      stat.ctimeNs,
+      stat.mode,
+    ].join(":");
+  }
   constructor(root: string, dataDir: string, db: DatabaseSync) {
     this.root = fs.realpathSync(root);
     this.dataDir = path.resolve(dataDir);
     this.db = db;
+    this.refreshFullTextRows();
+    this.rebuildRelations =
+      (
+        db
+          .prepare("SELECT value FROM settings WHERE key='link-index-version'")
+          .get() as Row | undefined
+      )?.value !== "2";
     if (
       !fs.statSync(this.root).isDirectory() ||
       !fs.existsSync(path.join(root, ".obsidian"))
@@ -129,9 +177,9 @@ export class Vault {
         JSON.stringify(n.tags),
         n.owner,
       );
-    this.db.prepare("DELETE FROM notes_fts WHERE path=?").run(relative);
-    if (!relative.startsWith(`${MANAGED}/Drafts/`))
-      this.db
+    this.clearFullText(relative);
+    if (!relative.startsWith(`${MANAGED}/Drafts/`)) {
+      const result = this.db
         .prepare("INSERT INTO notes_fts(path,title,body,tags) VALUES(?,?,?,?)")
         .run(
           relative,
@@ -139,11 +187,17 @@ export class Vault {
           n.owner === "paperdesk" ? n.body || "" : n.content,
           n.tags.join(" "),
         );
+      this.ftsRows.set(relative, [result.lastInsertRowid]);
+    }
     this.db.prepare("DELETE FROM relations WHERE from_path=?").run(relative);
-    for (const target of links(n.body || ""))
+    for (const link of markdownLinks(n.body || ""))
       this.db
         .prepare("INSERT OR IGNORE INTO relations VALUES(?,?,?)")
-        .run(relative, target, "related");
+        .run(
+          relative,
+          link.target,
+          link.style === "markdown" ? "markdown" : "related",
+        );
     for (const key of ["derived_from", "superseded_by", "source"])
       for (const target of Array.isArray(n.metadata[key])
         ? (n.metadata[key] as unknown[])
@@ -218,10 +272,17 @@ export class Vault {
     }
     return n;
   }
-  scan() {
+  scan(options: { incremental?: boolean; auditLimit?: number } = {}) {
     this.warnings = [];
     const seen = new Set<string>();
     let complete = true;
+    const candidates: { file: string; relative: string }[] = [];
+    const oldNotes = new Map(
+      (
+        this.db.prepare("SELECT path,hash,missing FROM notes").all() as Row[]
+      ).map((row) => [row.path, row]),
+    );
+    const restore = this.db.prepare("UPDATE notes SET missing=0 WHERE path=?");
     let ignore = ["_meta/"];
     try {
       const config = JSON.parse(
@@ -274,23 +335,54 @@ export class Vault {
         )
           continue;
         seen.add(relative);
-        try {
-          const content = readUtf8(file);
-          const old = this.db
-            .prepare("SELECT hash FROM notes WHERE path=?")
-            .get(relative) as Row | undefined;
-          if (!old || old.hash !== digest(content)) this.index(relative);
-          else
-            this.db
-              .prepare("UPDATE notes SET missing=0 WHERE path=?")
-              .run(relative);
-        } catch {
-          complete = false;
-          this.warnings.push(`文件暂不可读，保留旧索引：${relative}`);
-        }
+        candidates.push({ file, relative });
       }
     };
     walk(this.root);
+    const auditLimit = Math.max(
+      1,
+      Math.min(1024, Math.floor(options.auditLimit || 128)),
+    );
+    const auditStart = this.scanAuditOffset % Math.max(1, candidates.length);
+    const audited = new Set<string>();
+    for (let i = 0; i < Math.min(auditLimit, candidates.length); i++)
+      audited.add(candidates[(auditStart + i) % candidates.length].relative);
+    this.scanAuditOffset =
+      (auditStart + auditLimit) % Math.max(1, candidates.length);
+    for (const { file, relative } of candidates) {
+      try {
+        const before = this.fileSignature(file),
+          old = oldNotes.get(relative);
+        if (
+          options.incremental &&
+          !this.rebuildRelations &&
+          old &&
+          !old.missing &&
+          this.scanSignatures.get(relative) === before &&
+          !audited.has(relative)
+        )
+          continue;
+        const content = readUtf8(file),
+          hash = digest(content);
+        const indexed =
+          this.rebuildRelations || !old || old.hash !== hash
+            ? this.index(relative)
+            : null;
+        if (!indexed && old?.missing) restore.run(relative);
+        const after = this.fileSignature(file);
+        // A file changed during read/index: do not cache it as verified. Actual
+        // save/move checks always read and hash disk independently of this cache.
+        if (before === after && (!indexed || indexed.hash === hash))
+          this.scanSignatures.set(relative, after);
+        else this.scanSignatures.delete(relative);
+      } catch {
+        this.scanSignatures.delete(relative);
+        complete = false;
+        this.warnings.push(`文件暂不可读，保留旧索引：${relative}`);
+      }
+    }
+    for (const relative of this.scanSignatures.keys())
+      if (!seen.has(relative)) this.scanSignatures.delete(relative);
     if (complete)
       for (const row of this.db
         .prepare("SELECT path FROM notes")
@@ -299,6 +391,14 @@ export class Vault {
           this.db
             .prepare("UPDATE notes SET missing=1 WHERE path=?")
             .run(row.path);
+    if (complete && this.rebuildRelations) {
+      this.db
+        .prepare(
+          "INSERT INTO settings(key,value) VALUES('link-index-version','2') ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        )
+        .run();
+      this.rebuildRelations = false;
+    }
     return { notes: this.list(), warnings: this.warnings };
   }
   list() {
@@ -501,7 +601,7 @@ export class Vault {
       fs.unlinkSync(this.absolute(from));
       this.clearDraft(from);
       this.db.prepare("DELETE FROM notes WHERE path=?").run(from);
-      this.db.prepare("DELETE FROM notes_fts WHERE path=?").run(from);
+      this.clearFullText(from);
       this.db.prepare("DELETE FROM relations WHERE from_path=?").run(from);
       atomicWrite(
         journal,
