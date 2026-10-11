@@ -20,6 +20,7 @@ import {
 } from "./files.ts";
 import { openDatabase } from "./database.ts";
 import { Vault } from "./vault.ts";
+import { resolveVaultSelection } from "../desktop/vault-selection.mjs";
 import { Captures } from "./capture.ts";
 import { Processing } from "./processing.ts";
 import { Paperdesk } from "./paperdesk.ts";
@@ -27,6 +28,10 @@ import { callProvider, validateProvider } from "./provider.ts";
 import { paperdeskBody } from "./markdown.ts";
 import { relatedNotes } from "./relations.ts";
 import { RecoveryStore } from "./recovery.ts";
+import {
+  GENERAL_PROFILE,
+  researchSelectionSchema,
+} from "../shared/research-profiles.ts";
 import {
   SERVICE_FEATURES,
   recoveryIdentitySchema,
@@ -46,6 +51,8 @@ export type ServiceOptions = {
   desktop?: (action: string) => Promise<any>;
 };
 export async function startService(options: ServiceOptions) {
+  // Reject invalid selections before opening a database or starting a service.
+  if (options.vaultDir) resolveVaultSelection(options.vaultDir);
   const token = options.token || randomBytes(32).toString("hex"),
     vaultId = options.vaultDir
       ? digest(fs.realpathSync(options.vaultDir))
@@ -160,7 +167,13 @@ export async function startService(options: ServiceOptions) {
         ),
       ),
       vault: vault
-        ? { name: path.basename(vault.root), root: vault.root, id: vaultId }
+        ? {
+            name: path.basename(vault.scope),
+            root: vault.root,
+            scope: vault.scope,
+            scopePath: vault.scopePath,
+            id: vaultId,
+          }
         : null,
       warnings: [
         ...(vault?.warnings || []),
@@ -297,6 +310,22 @@ export async function startService(options: ServiceOptions) {
     const p = route.parse(req.query).path;
     res.json(relatedNotes(vault!, p));
   });
+  app.get("/api/resolve-link", (req, res) => {
+    const input = z
+      .object({
+        path: relativePathSchema,
+        target: z.string().max(8192),
+        style: z.enum(["wiki", "markdown"]),
+      })
+      .parse(req.query);
+    const resolved = vault!.resolveLink(input.target, input.path, input.style);
+    const outside = Boolean(
+      resolved &&
+        vault!.scopePath &&
+        !resolved.startsWith(vault!.scopePath + "/"),
+    );
+    res.json({ path: outside ? null : resolved, outside });
+  });
   app.post("/api/assets", (req, res) => {
     const b = z
       .object({ data: z.string().max(28 * 1024 * 1024) })
@@ -326,15 +355,28 @@ export async function startService(options: ServiceOptions) {
     res.status(201).json(captures!.add(b));
   });
   app.get("/api/jobs", (_req, res) => res.json(processing!.list()));
+  const batchInputSchema = z.object({
+    sourceIds: z.array(z.string().uuid()),
+    referencePaths: z.array(relativePathSchema).default([]),
+    executor: z.enum(["api", "codex"]),
+    instruction: z.string().max(10000).default(""),
+    researchSelection: researchSelectionSchema.optional(),
+    expectedPreviewHash: hashSchema.optional(),
+  });
+  app.post("/api/jobs/preview", (req, res) => {
+    const b = batchInputSchema.parse(req.body);
+    res.json(
+      processing!.preview(
+        b.sourceIds,
+        b.referencePaths,
+        b.executor,
+        b.instruction,
+        b.researchSelection,
+      ),
+    );
+  });
   app.post("/api/jobs", (req, res) => {
-    const b = z
-      .object({
-        sourceIds: z.array(z.string().uuid()),
-        referencePaths: z.array(relativePathSchema).default([]),
-        executor: z.enum(["api", "codex"]),
-        instruction: z.string().max(10000).default(""),
-      })
-      .parse(req.body);
+    const b = batchInputSchema.parse(req.body);
     res
       .status(201)
       .json(
@@ -343,6 +385,8 @@ export async function startService(options: ServiceOptions) {
           b.referencePaths,
           b.executor,
           b.instruction,
+          b.researchSelection,
+          b.expectedPreviewHash,
         ),
       );
   });
@@ -404,6 +448,18 @@ export async function startService(options: ServiceOptions) {
     }
     res.json({
       provider: config,
+      researchSelection: (() => {
+        try {
+          const row = db!
+            .prepare("SELECT value FROM settings WHERE key='research-profile'")
+            .get() as any;
+          return researchSelectionSchema.parse(
+            row ? JSON.parse(row.value) : GENERAL_PROFILE,
+          );
+        } catch {
+          return GENERAL_PROFILE;
+        }
+      })(),
       paperdesk: paperdesk!.profile(),
       encrypted: Boolean(options.encrypt),
     });
@@ -563,7 +619,7 @@ export async function startService(options: ServiceOptions) {
   const timer = vault
     ? setInterval(() => {
         try {
-          vault.scan();
+          vault.scan({ incremental: true });
           captures!.importPaperdesk();
         } catch {}
       }, 5000)

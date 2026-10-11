@@ -12,8 +12,8 @@ const appOnly = {
   "openai/widgetAccessible": true,
 };
 const routes: Record<string, RegExp> = {
-  GET: /^\/(status|recovery|notes|note|history|relations|captures|jobs|proposals|settings|assets|paperdesk\/source)(?:\?[^#]*)?$/,
-  POST: /^\/(refresh|notes|note\/move|history\/restore|assets|captures|jobs|jobs\/[a-f0-9-]+\/(run|pause|share)|proposals\/[a-f0-9-]+\/(accept|reject|rebase))$/,
+  GET: /^\/(status|recovery|notes|note|history|relations|resolve-link|captures|jobs|proposals|settings|assets|paperdesk\/source)(?:\?[^#]*)?$/,
+  POST: /^\/(refresh|notes|note\/move|history\/restore|assets|captures|jobs|jobs\/preview|jobs\/[a-f0-9-]+\/(run|pause|share)|proposals\/[a-f0-9-]+\/(accept|reject|rebase))$/,
   PUT: /^\/(recovery|note|draft|settings\/(paperdesk|appearance)|proposals\/[a-f0-9-]+)$/,
   DELETE: /^\/(draft|recovery)$/,
 };

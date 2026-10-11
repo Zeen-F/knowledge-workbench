@@ -10,6 +10,7 @@ workbench_panel_read 和 workbench_panel_write 仅供原生组件使用，模型
 整理材料时先检查工作台状态。只处理用户指定的已共享批次；未指定时列出批次供用户选择，不能扩展到全库。
 
 1. 读取批次清单并保留 inputHash、材料顺序和参考笔记的 path/hash。
+   若批次含 researchProfile，采用它固定的 id/version/focus/instructions。模拟 IC 科研配置对应 [analog-ic-research](../analog-ic-research/SKILL.md)，仅按 focus 加载需要的参考；相同指令不要重复叠加。没有该字段的批次保持通用整理，不根据材料标题擅自开启科研配置。
 2. 逐项读取正文；有 nextOffset 时继续读取。有原图则实际读取图片，不以标题猜测图片内容。
 3. 将可见原文、用户想法、AI 推断和待核对项分开记录。模糊符号、公式的条件和来源冲突明确保留，不补造科学结论。
 4. 整理为少量主题知识卡及学习记录。每份草稿的 sourceIds 必须对应支持该内容的实际材料。

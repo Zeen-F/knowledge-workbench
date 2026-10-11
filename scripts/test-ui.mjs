@@ -20,8 +20,9 @@ fs.writeFileSync(
 fs.mkdirSync("output/playwright", { recursive: true });
 const env = { ...process.env, KWB_VAULT: vault, KWB_PROFILE: profile };
 delete env.ELECTRON_RUN_AS_NODE;
-const executable =
-  process.env.KWB_TEST_EXE || createRequire(import.meta.url)("electron");
+const executable = fs.realpathSync.native(
+  process.env.KWB_TEST_EXE || createRequire(import.meta.url)("electron"),
+);
 let app;
 const errors = [];
 let stage = "launch";
@@ -68,6 +69,18 @@ try {
     path: "output/playwright/editor.png",
     fullPage: true,
   });
+  await page
+    .locator(".cm-content")
+    .getByRole("link", { name: "今天的学习记录", exact: true })
+    .click();
+  await expect(page.getByLabel("笔记编辑器")).toContainText(
+    "给下一次学习留下线索",
+  );
+  await page
+    .locator(".cm-content")
+    .getByRole("link", { name: "从一个问题开始", exact: true })
+    .click();
+  await expect(page.locator(".katex-display")).toBeVisible();
   for (const [theme, label] of [
     ["sand", "暖砂"],
     ["mist", "雾蓝"],
@@ -364,6 +377,7 @@ try {
       checks: [
         "desktop-start",
         "live-math",
+        "rendered-link-click-navigation",
         "four-themes",
         "source-toggle-preserves-file",
         "Chinese-input",

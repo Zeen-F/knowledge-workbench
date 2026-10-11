@@ -10,7 +10,7 @@ import "./themes.css";
 import "./panel.css";
 
 const bridge = new McpApp(
-  { name: "knowledge-workbench", version: "0.1.0-alpha.4" },
+  { name: "knowledge-workbench", version: "0.1.0-alpha.5" },
   { availableDisplayModes: ["inline", "fullscreen"] },
   { autoResize: false },
 );

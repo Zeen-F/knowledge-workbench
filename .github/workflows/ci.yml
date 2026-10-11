@@ -24,6 +24,8 @@ jobs:
       - run: npm.cmd run test:mcp
       - run: npm.cmd run test:ui
         timeout-minutes: 3
+      - run: npm.cmd run test:sidebar-subfolder
+        timeout-minutes: 3
       - uses: actions/checkout@v4
         with:
           repository: Zeen-F/PDF_Vibecoding

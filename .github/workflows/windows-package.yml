@@ -41,6 +41,9 @@ jobs:
         shell: pwsh
         run: |
           npm.cmd run test:ui
+      - name: Test installed sidebar and subfolder selection
+        timeout-minutes: 3
+        run: npm.cmd run test:sidebar-subfolder
       - name: Keep an active editor intact during an attempted update
         shell: pwsh
         run: node scripts/test-installer.mjs "$env:KWB_TEST_EXE" "$env:KWB_TEST_INSTALLER"

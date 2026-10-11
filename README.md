@@ -10,9 +10,11 @@ Markdown 与附件保存在用户选择的 Obsidian 仓库。纸间负责 PDF �
 
 Codex 插件可以唤起本机工作台，打开原生编辑面板，编辑笔记、收集材料和人工审核草稿。安装和使用方式见 [开发与使用](docs/development.md)。
 
+支持[侧栏收起、拖动调宽与 Obsidian 子文件夹选择](docs/sidebar-and-subfolders.md)。可选的[科研笔记配置](docs/research-profiles.md)可以预览所选数据和固定版本的整理规则，再交给现有 Codex 插件或模型 API。
+
 ## 安装 Windows 预览版
 
-在 [GitHub Releases](https://github.com/Zeen-F/knowledge-workbench/releases) 下载 `KnowledgeWorkbench-0.1.0-alpha.3-win-x64.exe`。本版包含 `0.1.0-alpha.4` Codex 插件及原生面板的可靠性和输入恢复优化；仍为早期预览。
+在 [GitHub Releases](https://github.com/Zeen-F/knowledge-workbench/releases) 下载 `KnowledgeWorkbench-0.1.0-alpha.4-win-x64.exe`。本版配套 `0.1.0-alpha.5` Codex 插件，加入侧栏调节、子目录范围和科研整理配置，并修复同名链接解析与移动笔记时的引用更新；仍为早期预览。可用文件及验证结果以 Release 页面为准。
 
 保存并退出旧工作台，断开占用安装目录的旧插件连接后运行安装器。安装器遇到文件占用会退出，保留编辑窗口。打开新工作台，在设置中点击“准备本地插件”，执行界面显示的两条命令，再在 Codex 新对话中启用“知识工作台”。
 

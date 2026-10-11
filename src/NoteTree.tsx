@@ -1,40 +1,43 @@
+import { useMemo, useState } from "react";
 import { FileText, Folder } from "lucide-react";
 import type { NoteSummary } from "../shared/contracts";
 
-type Branch = { notes: NoteSummary[]; children: Map<string, Branch> };
-export function NoteTree({
-  notes,
-  basePath = "",
-  active,
-  dirty,
-  onOpen,
-}: {
+type Branch = {
+  notes: NoteSummary[];
+  children: Map<string, Branch>;
+  count: number;
+};
+type TreeProps = {
   notes: NoteSummary[];
   basePath?: string;
   active: string;
   dirty: (path: string) => boolean;
   onOpen: (path: string) => void;
+};
+const PAGE_SIZE = 100;
+function BranchNotes({
+  branch,
+  prefix,
+  compact,
+  active,
+  dirty,
+  onOpen,
+  basePath,
+}: Omit<TreeProps, "notes"> & {
+  branch: Branch;
+  prefix: string;
+  compact: boolean;
 }) {
-  const root: Branch = { notes: [], children: new Map() };
-  for (const note of notes) {
-    let branch = root;
-    const relative =
-      basePath && note.path.startsWith(basePath + "/")
-        ? note.path.slice(basePath.length + 1)
-        : note.path;
-    for (const folder of relative.split("/").slice(0, -1)) {
-      if (!branch.children.has(folder))
-        branch.children.set(folder, { notes: [], children: new Map() });
-      branch = branch.children.get(folder)!;
-    }
-    branch.notes.push(note);
-  }
-  const render = (branch: Branch, prefix = "") => (
+  const [limit, setLimit] = useState(PAGE_SIZE);
+  const visible = branch.notes.slice(0, limit);
+  const selected = branch.notes.find((note) => note.path === active);
+  if (selected && !visible.includes(selected)) visible.push(selected);
+  return (
     <>
-      {branch.notes.map((note) => (
+      {visible.map((note) => (
         <button
           key={note.path}
-          className={active === note.path ? "active" : ""}
+          className={`note-row ${active === note.path ? "active" : ""}`}
           title={note.path}
           onClick={() => onOpen(note.path)}
         >
@@ -45,24 +48,108 @@ export function NoteTree({
           {dirty(note.path) && <b className="dirty-dot" />}
         </button>
       ))}
+      {branch.notes.length > limit && (
+        <button
+          className="note-row note-more"
+          onClick={() => setLimit((value) => value + PAGE_SIZE)}
+        >
+          再显示 {Math.min(PAGE_SIZE, branch.notes.length - limit)} 篇（共{" "}
+          {branch.notes.length} 篇）
+        </button>
+      )}
       {[...branch.children]
         .sort(([a], [b]) => a.localeCompare(b, "zh"))
         .map(([name, child]) => (
-          <details key={prefix + name} open className="note-folder">
-            <summary>
-              <Folder size={14} />
-              <span>
-                {basePath && !prefix
-                  ? { Cards: "知识卡", Journal: "学习记录", Assets: "附件" }[
-                      name
-                    ] || name
-                  : name}
-              </span>
-            </summary>
-            <div>{render(child, prefix + name + "/")}</div>
-          </details>
+          <TreeFolder
+            key={name}
+            name={name}
+            branch={child}
+            prefix={prefix + name + "/"}
+            compact={compact}
+            active={active}
+            dirty={dirty}
+            onOpen={onOpen}
+            basePath={basePath}
+            label={
+              basePath && prefix === basePath + "/"
+                ? { Cards: "知识卡", Journal: "学习记录", Assets: "附件" }[
+                    name
+                  ] || name
+                : name
+            }
+          />
         ))}
     </>
   );
-  return render(root);
+}
+function TreeFolder(
+  props: Omit<TreeProps, "notes"> & {
+    name: string;
+    label: string;
+    branch: Branch;
+    prefix: string;
+    compact: boolean;
+  },
+) {
+  const [choice, setChoice] = useState<{ active: string; open: boolean }>();
+  // A newly opened note remains reachable even if its folder was collapsed.
+  const open =
+    choice?.active === props.active
+      ? choice.open
+      : !props.compact || props.active.startsWith(props.prefix);
+  return (
+    <details open={open} className="note-folder">
+      <summary
+        onClick={(event) => {
+          event.preventDefault();
+          setChoice({ active: props.active, open: !open });
+        }}
+      >
+        <Folder size={14} />
+        <span>{props.label}</span>
+        <small>{props.branch.count}</small>
+      </summary>
+      {open && (
+        <div>
+          <BranchNotes {...props} />
+        </div>
+      )}
+    </details>
+  );
+}
+export function NoteTree({ notes, basePath = "", ...props }: TreeProps) {
+  const base = basePath ? basePath.replace(/\/$/, "") + "/" : "";
+  const root = useMemo(() => {
+    const root: Branch = { notes: [], children: new Map(), count: 0 };
+    for (const note of notes) {
+      let branch = root;
+      branch.count++;
+      for (const folder of (base && note.path.startsWith(base)
+        ? note.path.slice(base.length)
+        : note.path
+      )
+        .split("/")
+        .slice(0, -1)) {
+        if (!branch.children.has(folder))
+          branch.children.set(folder, {
+            notes: [],
+            children: new Map(),
+            count: 0,
+          });
+        branch = branch.children.get(folder)!;
+        branch.count++;
+      }
+      branch.notes.push(note);
+    }
+    return root;
+  }, [notes, base]);
+  return (
+    <BranchNotes
+      branch={root}
+      prefix={base}
+      basePath={basePath}
+      compact={notes.length > 300}
+      {...props}
+    />
+  );
 }

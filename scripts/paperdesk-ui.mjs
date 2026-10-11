@@ -170,8 +170,21 @@ export async function importAndReturn(
   const popup = page.waitForEvent("popup");
   await page.getByRole("button", { name: "回到纸间原页" }).click();
   const reader = await popup;
+  const expectedSourceParams = {
+    document: regionCapture.ref.paperdesk.documentId,
+    page: "3",
+    pdfSha256: regionCapture.ref.paperdesk.pdfSha256,
+    capture: regionCapture.ref.transferId,
+  };
   await expect(reader).toHaveURL(
-    new RegExp(`[?]document=${regionCapture.ref.paperdesk.documentId}&page=3$`),
+    (url) =>
+      url.origin === new URL(paperdeskBase).origin &&
+      url.pathname === "/" &&
+      url.hash === "" &&
+      url.searchParams.size === Object.keys(expectedSourceParams).length &&
+      Object.entries(expectedSourceParams).every(
+        ([key, value]) => url.searchParams.get(key) === value,
+      ),
   );
   await expect(
     reader.getByRole("spinbutton", { name: "页码", exact: true }),

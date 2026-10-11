@@ -1,6 +1,6 @@
 {
   "name": "knowledge-workbench",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-alpha.4",
   "description": "Windows 与 macOS 模拟 IC 学习、写作与知识整理工作台",
   "private": true,
   "type": "module",
@@ -19,6 +19,7 @@
     "test": "node --import tsx --test tests/*.test.ts",
     "check": "npm run lint && npm run typecheck && npm run test && npm run build",
     "test:ui": "node scripts/test-ui.mjs",
+    "test:sidebar-subfolder": "node scripts/test-sidebar-subfolder.mjs",
     "desktop:pack": "npm run build && electron-builder --dir --publish never",
     "desktop:dist": "npm run build && electron-builder --publish never",
     "plugin:setup": "node scripts/setup-plugin.mjs",

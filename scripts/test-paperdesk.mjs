@@ -61,6 +61,7 @@ try {
   };
   const { document } = await request("/vault/pdfs/open", { path: "示例.pdf" });
   browser = await chromium.launch({
+    executablePath: process.env.KWB_TEST_EXECUTABLE,
     headless: !process.argv.includes("--headed"),
     channel: process.env.KWB_TEST_BROWSER || undefined,
   });

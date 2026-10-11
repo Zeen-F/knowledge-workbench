@@ -1,6 +1,10 @@
+import { createNoteResolver } from "../shared/note-links";
 import { NoteTree } from "./NoteTree";
+import { matchesNoteSection } from "./note-navigation";
+import { RecentNotes } from "./RecentNotes";
+import { useSidebarLayout } from "./SidebarLayout";
 import { primaryModifier } from "./platform";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -22,6 +26,8 @@ import {
   LoaderCircle,
   MoveRight,
   NotebookPen,
+  PanelLeftClose,
+  PanelLeftOpen,
   PanelRightClose,
   Plus,
   RefreshCw,
@@ -63,6 +69,7 @@ type Tab = {
 };
 type View = "all" | "concept" | "learning-log" | "inbox" | "review";
 export default function App() {
+  const sidebar = useSidebarLayout();
   const [status, setStatus] = useState<any>(null),
     [notes, setNotes] = useState<NoteSummary[]>([]),
     [captures, setCaptures] = useState<Capture[]>([]),
@@ -160,7 +167,9 @@ export default function App() {
       api<Proposal[]>("GET", "/proposals"),
     ]);
     if (generation !== refreshGeneration.current) return;
-    setNotes(n);
+    setNotes((previous) =>
+      JSON.stringify(previous) === JSON.stringify(n) ? previous : n,
+    );
     setCaptures(c);
     setJobs(j);
     setProposals(p);
@@ -363,12 +372,32 @@ export default function App() {
         setCreate(true);
       }
     };
+    let resuming = false;
+    const resume = () => {
+      if (
+        resuming ||
+        document.visibilityState === "hidden" ||
+        !statusRef.current?.vault
+      )
+        return;
+      resuming = true;
+      void api("POST", "/refresh")
+        .then(() => refresh())
+        .catch((error) => notify(error.message, true))
+        .finally(() => {
+          resuming = false;
+        });
+    };
+    window.addEventListener("focus", resume);
+    document.addEventListener("visibilitychange", resume);
     window.addEventListener("beforeunload", before);
     window.addEventListener("keydown", key);
     return () => {
       clearInterval(timer);
       unregister?.();
       captureOff?.();
+      window.removeEventListener("focus", resume);
+      document.removeEventListener("visibilitychange", resume);
       window.removeEventListener("beforeunload", before);
       window.removeEventListener("keydown", key);
       for (const timer of Object.values(timers.current)) clearTimeout(timer);
@@ -381,7 +410,10 @@ export default function App() {
       if (query.trim())
         void api<NoteSummary[]>(
           "GET",
-          "/notes?q=" + encodeURIComponent(query) + "&scope=" + scope,
+          "/notes?q=" +
+            encodeURIComponent(query) +
+            "&scope=" +
+            (status?.vault?.scopePath ? "vault" : scope),
         )
           .then((r) => {
             if (current) setResults(r);
@@ -395,7 +427,7 @@ export default function App() {
       current = false;
       clearTimeout(timer);
     };
-  }, [query, scope]);
+  }, [query, scope, status?.vault?.scopePath]);
   useEffect(() => {
     let current = true;
     setRelations(null);
@@ -452,8 +484,9 @@ export default function App() {
       throw e;
     }
   }
-  function followLink(target: string) {
-    if (target.startsWith("kb:"))
+  async function followLink(target: string) {
+    const style = target.startsWith("kb:") ? "wiki" : "markdown";
+    if (style === "wiki")
       try {
         target = decodeURIComponent(target.slice(3));
       } catch {}
@@ -461,13 +494,33 @@ export default function App() {
       void openExternal(target);
       return;
     }
-    target = target.split("#")[0];
-    const normalized = target.replace(/^\//, "").replace(/\.md$/, "");
-    const found =
-      notes.find((n) => n.path.replace(/\.md$/, "") === normalized) ||
-      notes.find(
-        (n) => n.path.split("/").at(-1)?.replace(/\.md$/, "") === normalized,
-      );
+    const normalized = target.split("#")[0];
+    if (status?.vault?.scopePath) {
+      const from = active;
+      const generation = ++openGeneration.current;
+      try {
+        const result = await api(
+          "GET",
+          "/resolve-link?" + new URLSearchParams({ path: from, target, style }),
+        );
+        if (activeRef.current !== from || openGeneration.current !== generation)
+          return;
+        if (result.outside)
+          notify("此链接指向其他目录，请打开整个知识库后查看。");
+        else if (result.path) await openNote(result.path);
+        else {
+          setQuery(normalized);
+          notify("未找到唯一匹配的笔记，已按链接内容查找。");
+        }
+      } catch (error) {
+        notify((error as Error).message, true);
+      }
+      return;
+    }
+    const resolved = createNoteResolver(
+      notes.filter((n) => !n.missing).map((n) => n.path),
+    )(target, active, style);
+    const found = notes.find((n) => n.path === resolved);
     if (found) void openNote(found.path);
     else {
       setQuery(normalized);
@@ -546,46 +599,50 @@ export default function App() {
   }
   const t = tabs.current[active],
     pending = proposals.filter((p) => p.status === "pending").length;
-  const inScope = (n: NoteSummary) =>
-    !n.missing &&
-    !n.path.includes("/Drafts/") &&
-    !n.path.includes("/Inbox/") &&
-    (scope === "vault" || n.path.startsWith(`${MANAGED}/`));
-  const scopedNotes = notes.filter(inScope);
-  const visible = (results || notes).filter(
-    (n) =>
-      inScope(n) &&
-      (view === "concept"
-        ? n.noteType === "concept"
-        : view === "learning-log"
-          ? n.noteType === "learning-log"
-          : true),
+  const effectiveScope = status?.vault?.scopePath ? "vault" : scope;
+  const scopedNotes = useMemo(
+    () =>
+      notes.filter(
+        (n) => effectiveScope === "vault" || n.path.startsWith(`${MANAGED}/`),
+      ),
+    [notes, effectiveScope],
+  );
+  const visible = useMemo(
+    () => (results || scopedNotes).filter((n) => matchesNoteSection(n, view)),
+    [results, scopedNotes, view],
   );
   const sections = [
     {
       key: "all",
       label: "全部笔记",
       icon: BookOpen,
-      count: scopedNotes.length,
+      count: scopedNotes.filter((n) => matchesNoteSection(n, "all")).length,
     },
     {
       key: "concept",
       label: "知识卡",
       icon: FilePenLine,
-      count: scopedNotes.filter((n) => n.noteType === "concept").length,
+      count: scopedNotes.filter((n) => matchesNoteSection(n, "concept")).length,
     },
     {
       key: "learning-log",
       label: "学习记录",
       icon: Clock3,
-      count: scopedNotes.filter((n) => n.noteType === "learning-log").length,
+      count: scopedNotes.filter((n) => matchesNoteSection(n, "learning-log"))
+        .length,
     },
     { key: "inbox", label: "收集箱", icon: InboxIcon, count: captures.length },
     { key: "review", label: "待审稿", icon: Sparkles, count: pending },
   ];
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
+    <div
+      className={`app-shell${sidebar.collapsed ? " sidebar-collapsed" : ""}${sidebar.dragging ? " sidebar-dragging" : ""}`}
+    >
+      <aside
+        id="navigation-sidebar"
+        className="sidebar"
+        style={{ width: sidebar.width }}
+      >
         <div className="brand">
           <div className="brand-mark">
             <NotebookPen size={25} strokeWidth={1.4} />
@@ -600,7 +657,7 @@ export default function App() {
           disabled={!status?.capabilities?.chooseVault}
           title={
             status?.capabilities?.chooseVault
-              ? "选择知识库"
+              ? `选择知识库或子文件夹${status?.vault ? `\n所属知识库：${status.vault.root}\n当前目录：${status.vault.scope || status.vault.root}` : ""}`
               : "此浏览器服务已固定知识库，请在桌面应用选库"
           }
           onClick={() => {
@@ -615,7 +672,12 @@ export default function App() {
           <span>{status?.vault?.name || "选择知识库"}</span>
           <ChevronDown size={13} />
         </button>
-        {status?.vault && (
+        {status?.vault?.scopePath && (
+          <p className="vault-scope" title={status.vault.scope}>
+            子目录 · {status.vault.scopePath}
+          </p>
+        )}
+        {status?.vault && !status.vault.scopePath && (
           <label className="note-scope">
             <span>笔记范围</span>
             <select
@@ -659,7 +721,11 @@ export default function App() {
           <input
             aria-label="搜索知识库"
             placeholder={
-              scope === "workbench" ? "搜索我的知识库" : "搜索整个仓库"
+              status?.vault?.scopePath
+                ? "搜索当前子目录"
+                : scope === "workbench"
+                  ? "搜索我的知识库"
+                  : "搜索整个仓库"
             }
             value={query}
             onChange={(e) => {
@@ -721,7 +787,9 @@ export default function App() {
         <div className="note-list">
           <NoteTree
             notes={visible}
-            basePath={scope === "workbench" ? MANAGED : ""}
+            basePath={
+              status?.vault?.scopePath || (scope === "workbench" ? MANAGED : "")
+            }
             active={["inbox", "review"].includes(view) ? "" : active}
             dirty={(p) => Boolean(tabs.current[p]?.dirty)}
             onOpen={(p) => void openNote(p)}
@@ -746,9 +814,24 @@ export default function App() {
             <Settings2 size={17} />
           </button>
         </footer>
+        {sidebar.separator}
       </aside>
       <main className="main-workspace">
         <header className="app-header">
+          <button
+            className="icon sidebar-toggle"
+            aria-label={sidebar.collapsed ? "展开导航侧栏" : "收起导航侧栏"}
+            title={sidebar.collapsed ? "展开导航侧栏" : "收起导航侧栏"}
+            aria-expanded={!sidebar.collapsed}
+            aria-controls="navigation-sidebar"
+            onClick={sidebar.toggle}
+          >
+            {sidebar.collapsed ? (
+              <PanelLeftOpen size={18} />
+            ) : (
+              <PanelLeftClose size={18} />
+            )}
+          </button>
           <div className="breadcrumbs">
             <span>我的学习空间</span>
             <span>/</span>
@@ -805,7 +888,9 @@ export default function App() {
               <FolderOpen size={17} />
               打开 Obsidian 知识库
             </button>
-            <small>选择包含 .obsidian 文件夹的知识库目录。</small>
+            <small>
+              可以选择整个 Obsidian 知识库，也可以只打开其中的资料子文件夹。
+            </small>
           </div>
         ) : view === "inbox" ? (
           <Inbox
@@ -833,7 +918,10 @@ export default function App() {
           <>
             <div className="tab-strip">
               {tabOrder
-                .filter((p) => scope === "vault" || p.startsWith(`${MANAGED}/`))
+                .filter(
+                  (p) =>
+                    effectiveScope === "vault" || p.startsWith(`${MANAGED}/`),
+                )
                 .map((p) => (
                   <div key={p} className={active === p ? "active" : ""}>
                     <button
@@ -868,9 +956,11 @@ export default function App() {
                 <span className="eyebrow">YOUR THINKING, IN PROGRESS</span>
                 <h1>今天，想弄清什么？</h1>
                 <p>
-                  {scope === "workbench"
-                    ? `这里是你的专属学习空间，笔记保存在 Obsidian 的 ${MANAGED} 文件夹。`
-                    : "正在浏览整个 Obsidian 仓库，也可以切回“我的知识库”专注记录。"}
+                  {status?.vault?.scopePath
+                    ? `正在浏览 ${status.vault.scopePath}，新记录保存在当前子目录内。`
+                    : scope === "workbench"
+                      ? `这里是你的专属学习空间，笔记保存在 Obsidian 的 ${MANAGED} 文件夹。`
+                      : "正在浏览整个 Obsidian 仓库，也可以切回“我的知识库”专注记录。"}
                 </p>
                 <div className="start-actions">
                   <button
@@ -892,20 +982,10 @@ export default function App() {
                     <ArrowUpRight size={17} />
                   </button>
                 </div>
-                <div className="section-label">
-                  <span>最近编辑</span>
-                  <span>{visible.length} 篇笔记</span>
-                </div>
-                <div className="recent-notes">
-                  {visible.slice(0, 7).map((n) => (
-                    <button key={n.path} onClick={() => void openNote(n.path)}>
-                      <FileText size={16} />
-                      <span>{n.title}</span>
-                      <small>{shortDate(n.updatedAt)}</small>
-                      <ArrowUpRight size={14} />
-                    </button>
-                  ))}
-                </div>
+                <RecentNotes
+                  notes={visible}
+                  onOpen={(path) => void openNote(path)}
+                />
               </div>
             ) : (
               <div className="writing-layout">
@@ -1128,9 +1208,10 @@ export default function App() {
                               onClick={() =>
                                 link.kind === "asset"
                                   ? setAttachment(link)
-                                  : followLink(
-                                      link.to_ref.replace(/^\[\[|\]\]$/g, ""),
-                                    )
+                                  : link.resolved
+                                    ? void openNote(link.to_ref)
+                                    : (setQuery(link.to_ref),
+                                      notify("已按链接内容查找笔记"))
                               }
                             >
                               <Link2 size={12} />
@@ -1384,6 +1465,11 @@ export default function App() {
       )}
       {moving && t && (
         <Modal title="重命名或移动笔记" wide onClose={() => setMoving(false)}>
+          {status?.vault?.scopePath && (
+            <p className="muted">
+              当前只更新所选子文件夹内的链接。如需同时更新其他目录的引用，请先打开整个知识库。
+            </p>
+          )}
           <label>
             知识库内的新位置
             <input

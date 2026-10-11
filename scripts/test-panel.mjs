@@ -71,6 +71,7 @@ try {
     image: "data:image/png;base64," + image.toString("base64"),
   });
   browser = await chromium.launch({
+    executablePath: process.env.KWB_TEST_EXECUTABLE,
     headless: true,
     ...(process.env.KWB_TEST_BROWSER
       ? { channel: process.env.KWB_TEST_BROWSER }

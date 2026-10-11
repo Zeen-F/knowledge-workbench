@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { resolveVaultSelection } from "../desktop/vault-selection.mjs";
+import { createNoteResolver } from "../shared/note-links.ts";
 import {
   MANAGED,
   sourceRefSchema,
@@ -20,39 +22,170 @@ import {
   slug,
 } from "./files.ts";
 import {
+  createLinkRewriter,
   formatMarkdown,
-  links,
+  markdownLinks,
   noteTitle,
   parseMarkdown,
   paperdeskBody,
-  rewriteLinks,
 } from "./markdown.ts";
 
 type Row = Record<string, any>;
+const LINK_INDEX_VERSION = "3";
 export class Vault {
   root: string;
+  scope: string;
+  scopePath: string;
+  managed: string;
   dataDir: string;
   db: DatabaseSync;
   warnings: string[] = [];
+  private scanSignatures = new Map<string, string>();
+  private scanAuditOffset = 0;
+  private rebuildRelations: boolean;
+  private ftsRows = new Map<string, (number | bigint)[]>();
+  private ftsDataVersion = -1;
+  private refreshFullTextRows() {
+    const version = (this.db.prepare("PRAGMA data_version").get() as Row)
+      .data_version;
+    if (version === this.ftsDataVersion) return;
+    this.ftsRows.clear();
+    for (const row of this.db
+      .prepare("SELECT rowid,path FROM notes_fts")
+      .all() as Row[]) {
+      const rows = this.ftsRows.get(row.path) || [];
+      rows.push(row.rowid);
+      this.ftsRows.set(row.path, rows);
+    }
+    this.ftsDataVersion = version;
+  }
+  private clearFullText(relative: string) {
+    // Another connection invalidates the row map. The path guard also prevents
+    // a recycled rowid from removing an unrelated note's derived search row.
+    this.refreshFullTextRows();
+    const remove = this.db.prepare(
+      "DELETE FROM notes_fts WHERE rowid=? AND path=?",
+    );
+    for (const rowid of this.ftsRows.get(relative) || [])
+      remove.run(rowid, relative);
+    this.ftsRows.delete(relative);
+  }
+  private fileSignature(file: string) {
+    const stat = fs.statSync(file, { bigint: true });
+    return [
+      stat.dev,
+      stat.ino,
+      stat.size,
+      stat.mtimeNs,
+      stat.ctimeNs,
+      stat.mode,
+    ].join(":");
+  }
   constructor(root: string, dataDir: string, db: DatabaseSync) {
-    this.root = fs.realpathSync(root);
+    const selection = resolveVaultSelection(root);
+    this.root = selection.root;
+    this.scope = selection.scope;
+    this.scopePath = selection.scopePath;
+    this.managed =
+      path.basename(this.scope).toLowerCase() === MANAGED.toLowerCase() &&
+      this.scopePath
+        ? this.scopePath
+        : path.posix.join(this.scopePath, MANAGED);
     this.dataDir = path.resolve(dataDir);
     this.db = db;
-    if (
-      !fs.statSync(this.root).isDirectory() ||
-      !fs.existsSync(path.join(root, ".obsidian"))
-    )
-      throw new AppError("请选择包含 .obsidian 文件夹的知识库");
+    this.refreshFullTextRows();
+    this.rebuildRelations =
+      (
+        db
+          .prepare("SELECT value FROM settings WHERE key='link-index-version'")
+          .get() as Row | undefined
+      )?.value !== LINK_INDEX_VERSION;
     fs.mkdirSync(dataDir, { recursive: true });
     if (inside(this.root, fs.realpathSync(dataDir)))
       throw new AppError("应用索引必须保存在知识库之外");
     for (const dir of ["Inbox", "Cards", "Journal", "Drafts", "Assets"])
-      fs.mkdirSync(safePath(this.root, `${MANAGED}/${dir}`), {
+      fs.mkdirSync(this.absolute(`${this.managed}/${dir}`), {
         recursive: true,
       });
   }
   absolute(relative: string) {
-    return safePath(this.root, relative);
+    const file = safePath(this.root, relative);
+    if (!inside(this.scope, file))
+      throw new AppError(
+        "此文件不在当前选定的子文件夹内，请切换目录后打开",
+        403,
+        "OUTSIDE_SCOPE",
+      );
+    // Also reject junctions that point at another folder inside the parent vault.
+    return safePath(this.scope, portable(path.relative(this.scope, file)));
+  }
+  linkPaths(): string[] {
+    if (!this.scopePath)
+      return this.list()
+        .filter((note) => !note.missing)
+        .map((note) => note.path);
+    // A short wiki name keeps the parent vault's meaning. Only enumerate names
+    // outside the chosen folder; never read/index their Markdown bodies.
+    const paths: string[] = [];
+    const ignore = this.ignoredPaths();
+    const walk = (directory: string) => {
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(directory, { withFileTypes: true });
+      } catch {
+        throw new AppError(
+          "部分目录暂不可读，无法确认同名链接，请稍后重试",
+          409,
+        );
+      }
+      for (const entry of entries) {
+        if (
+          entry.name.startsWith(".") ||
+          ["node_modules", "_templates"].includes(entry.name) ||
+          entry.isSymbolicLink()
+        )
+          continue;
+        const target = path.join(directory, entry.name);
+        const relative = portable(path.relative(this.root, target));
+        if (
+          ignore.some(
+            (prefix) =>
+              relative === prefix.replace(/\/$/, "") ||
+              relative.startsWith(prefix.endsWith("/") ? prefix : prefix + "/"),
+          )
+        )
+          continue;
+        if (entry.isDirectory()) walk(target);
+        else if (
+          entry.isFile() &&
+          /\.md$/i.test(entry.name) &&
+          entry.name !== "AGENTS.md" &&
+          !relative.endsWith("/Library.md")
+        )
+          paths.push(relative);
+      }
+    };
+    walk(this.root);
+    return paths;
+  }
+  resolveLink(target: string, from: string, style: "wiki" | "markdown") {
+    this.absolute(from);
+    return createNoteResolver(this.linkPaths())(target, from, style);
+  }
+  private ignoredPaths(): string[] {
+    try {
+      const config = JSON.parse(
+        readUtf8(path.join(this.root, ".obsidian", "app.json")),
+      );
+      return [
+        "_meta/",
+        ...(config.userIgnoreFilters || []).filter(
+          (value: unknown) => typeof value === "string",
+        ),
+      ];
+    } catch {
+      return ["_meta/"];
+    }
   }
   summary(row: Row): NoteSummary {
     return {
@@ -93,7 +226,7 @@ export class Vault {
       tags: Array.isArray(metadata.tags) ? metadata.tags.map(String) : [],
       owner: managed
         ? "paperdesk"
-        : relative.startsWith(`${MANAGED}/`)
+        : relative.startsWith(`${this.managed}/`)
           ? "workbench"
           : "external",
       content,
@@ -129,9 +262,9 @@ export class Vault {
         JSON.stringify(n.tags),
         n.owner,
       );
-    this.db.prepare("DELETE FROM notes_fts WHERE path=?").run(relative);
-    if (!relative.startsWith(`${MANAGED}/Drafts/`))
-      this.db
+    this.clearFullText(relative);
+    if (!relative.startsWith(`${this.managed}/Drafts/`)) {
+      const result = this.db
         .prepare("INSERT INTO notes_fts(path,title,body,tags) VALUES(?,?,?,?)")
         .run(
           relative,
@@ -139,11 +272,17 @@ export class Vault {
           n.owner === "paperdesk" ? n.body || "" : n.content,
           n.tags.join(" "),
         );
+      this.ftsRows.set(relative, [result.lastInsertRowid]);
+    }
     this.db.prepare("DELETE FROM relations WHERE from_path=?").run(relative);
-    for (const target of links(n.body || ""))
+    for (const link of markdownLinks(n.body || ""))
       this.db
         .prepare("INSERT OR IGNORE INTO relations VALUES(?,?,?)")
-        .run(relative, target, "related");
+        .run(
+          relative,
+          link.target,
+          link.style === "markdown" ? "markdown" : "related",
+        );
     for (const key of ["derived_from", "superseded_by", "source"])
       for (const target of Array.isArray(n.metadata[key])
         ? (n.metadata[key] as unknown[])
@@ -218,22 +357,18 @@ export class Vault {
     }
     return n;
   }
-  scan() {
+  scan(options: { incremental?: boolean; auditLimit?: number } = {}) {
     this.warnings = [];
     const seen = new Set<string>();
     let complete = true;
-    let ignore = ["_meta/"];
-    try {
-      const config = JSON.parse(
-        readUtf8(path.join(this.root, ".obsidian", "app.json")),
-      );
-      ignore = [
-        ...ignore,
-        ...(config.userIgnoreFilters || []).filter(
-          (v: unknown) => typeof v === "string",
-        ),
-      ];
-    } catch {}
+    const candidates: { file: string; relative: string }[] = [];
+    const oldNotes = new Map(
+      (
+        this.db.prepare("SELECT path,hash,missing FROM notes").all() as Row[]
+      ).map((row) => [row.path, row]),
+    );
+    const restore = this.db.prepare("UPDATE notes SET missing=0 WHERE path=?");
+    const ignore = this.ignoredPaths();
     const walk = (dir: string) => {
       let entries: fs.Dirent[];
       try {
@@ -274,23 +409,54 @@ export class Vault {
         )
           continue;
         seen.add(relative);
-        try {
-          const content = readUtf8(file);
-          const old = this.db
-            .prepare("SELECT hash FROM notes WHERE path=?")
-            .get(relative) as Row | undefined;
-          if (!old || old.hash !== digest(content)) this.index(relative);
-          else
-            this.db
-              .prepare("UPDATE notes SET missing=0 WHERE path=?")
-              .run(relative);
-        } catch {
-          complete = false;
-          this.warnings.push(`文件暂不可读，保留旧索引：${relative}`);
-        }
+        candidates.push({ file, relative });
       }
     };
-    walk(this.root);
+    walk(this.scope);
+    const auditLimit = Math.max(
+      1,
+      Math.min(1024, Math.floor(options.auditLimit || 128)),
+    );
+    const auditStart = this.scanAuditOffset % Math.max(1, candidates.length);
+    const audited = new Set<string>();
+    for (let i = 0; i < Math.min(auditLimit, candidates.length); i++)
+      audited.add(candidates[(auditStart + i) % candidates.length].relative);
+    this.scanAuditOffset =
+      (auditStart + auditLimit) % Math.max(1, candidates.length);
+    for (const { file, relative } of candidates) {
+      try {
+        const before = this.fileSignature(file),
+          old = oldNotes.get(relative);
+        if (
+          options.incremental &&
+          !this.rebuildRelations &&
+          old &&
+          !old.missing &&
+          this.scanSignatures.get(relative) === before &&
+          !audited.has(relative)
+        )
+          continue;
+        const content = readUtf8(file),
+          hash = digest(content);
+        const indexed =
+          this.rebuildRelations || !old || old.hash !== hash
+            ? this.index(relative)
+            : null;
+        if (!indexed && old?.missing) restore.run(relative);
+        const after = this.fileSignature(file);
+        // A file changed during read/index: do not cache it as verified. Actual
+        // save/move checks always read and hash disk independently of this cache.
+        if (before === after && (!indexed || indexed.hash === hash))
+          this.scanSignatures.set(relative, after);
+        else this.scanSignatures.delete(relative);
+      } catch {
+        this.scanSignatures.delete(relative);
+        complete = false;
+        this.warnings.push(`文件暂不可读，保留旧索引：${relative}`);
+      }
+    }
+    for (const relative of this.scanSignatures.keys())
+      if (!seen.has(relative)) this.scanSignatures.delete(relative);
     if (complete)
       for (const row of this.db
         .prepare("SELECT path FROM notes")
@@ -299,6 +465,14 @@ export class Vault {
           this.db
             .prepare("UPDATE notes SET missing=1 WHERE path=?")
             .run(row.path);
+    if (complete && this.rebuildRelations) {
+      this.db
+        .prepare(
+          "INSERT INTO settings(key,value) VALUES('link-index-version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        )
+        .run(LINK_INDEX_VERSION);
+      this.rebuildRelations = false;
+    }
     return { notes: this.list(), warnings: this.warnings };
   }
   list() {
@@ -315,7 +489,7 @@ export class Vault {
         (note) =>
           scope === "vault" ||
           (!note.missing &&
-            note.path.startsWith(`${MANAGED}/`) &&
+            note.path.startsWith(`${this.managed}/`) &&
             !note.path.includes("/Drafts/") &&
             !note.path.includes("/Inbox/")),
       );
@@ -323,10 +497,17 @@ export class Vault {
     // cannot crowd managed notes out of the first 100 search results.
     const scopeFilter =
       scope === "workbench"
-        ? " AND n.path GLOB ? AND n.path NOT GLOB ? AND n.path NOT GLOB ?"
+        ? " AND substr(n.path,1,?)=? AND n.path NOT GLOB ? AND n.path NOT GLOB ?"
         : "";
     const scopeArgs =
-      scope === "workbench" ? [`${MANAGED}/*`, "*/Drafts/*", "*/Inbox/*"] : [];
+      scope === "workbench"
+        ? [
+            this.managed.length + 1,
+            `${this.managed}/`,
+            "*/Drafts/*",
+            "*/Inbox/*",
+          ]
+        : [];
     let rows: Row[];
     if (Array.from(q).length >= 3)
       rows = this.db
@@ -427,7 +608,7 @@ export class Vault {
   create(title: string, noteType = "concept", content?: string) {
     const id = randomUUID(),
       folder = noteType === "learning-log" ? "Journal" : "Cards";
-    const relative = `${MANAGED}/${folder}/${slug(title)}--${id.slice(0, 8)}.md`;
+    const relative = `${this.managed}/${folder}/${slug(title)}--${id.slice(0, 8)}.md`;
     const body =
       content ||
       `# ${title}\n\n${noteType === "learning-log" ? "## 本次问题\n\n\n## 过程与观察\n\n\n## 当前判断\n\n\n## 下一步与连接" : "## 核心问题与结论\n\n\n## 机制、模型或推导\n\n\n## 例子与边界\n\n\n## 尚未解决\n\n\n## 来源与连接"}\n\n`;
@@ -466,13 +647,14 @@ export class Vault {
     if (!to.endsWith(".md") || fs.existsSync(target))
       throw new AppError("目标已存在或不是 Markdown 文件", 409);
     const all = this.list().filter((n) => !n.missing),
-      paths = all.map((n) => n.path);
+      paths = this.scopePath ? this.linkPaths() : all.map((n) => n.path),
+      rewrite = createLinkRewriter(from, to, paths);
     const updates = all
       .map((n) => this.read(n.path))
       .filter((n) => n.owner !== "paperdesk")
       .map((n) => ({
         ...n,
-        next: rewriteLinks(n.content, from, to, n.path, paths),
+        next: rewrite(n.content, n.path),
       }))
       .filter((n) => n.path === from || n.content !== n.next);
     if (updates.some((n) => n.draft && n.draft.content !== n.content))
@@ -522,7 +704,7 @@ export class Vault {
       fs.unlinkSync(this.absolute(from));
       this.clearDraft(from);
       this.db.prepare("DELETE FROM notes WHERE path=?").run(from);
-      this.db.prepare("DELETE FROM notes_fts WHERE path=?").run(from);
+      this.clearFullText(from);
       this.db.prepare("DELETE FROM relations WHERE from_path=?").run(from);
       atomicWrite(
         journal,

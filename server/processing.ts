@@ -2,9 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import {
-  MANAGED,
   draftProposalSchema,
   type BatchSnapshot,
+  type BatchPreview,
   type DraftProposal,
   type Job,
   type Proposal,
@@ -15,6 +15,12 @@ import { formatMarkdown, parseMarkdown } from "./markdown.ts";
 import { callProvider } from "./provider.ts";
 import type { Vault } from "./vault.ts";
 import type { Captures } from "./capture.ts";
+import {
+  GENERAL_PROFILE,
+  researchSelectionSchema,
+  researchSnapshotSchema,
+  snapshotResearchProfile,
+} from "../shared/research-profiles.ts";
 
 export class Processing {
   running = new Map<string, AbortController>();
@@ -24,12 +30,13 @@ export class Processing {
     public captures: Captures,
     public getProvider: () => Promise<Provider>,
   ) {}
-  create(
+  preview(
     sourceIds: string[],
     referencePaths: string[],
     executor: "api" | "codex",
     instruction: string,
-  ) {
+    selection: unknown = GENERAL_PROFILE,
+  ): BatchPreview {
     if (!sourceIds.length || sourceIds.length > 100)
       throw new AppError("每批请选择 1 至 100 项材料");
     if (referencePaths.length > 20)
@@ -37,6 +44,9 @@ export class Processing {
     const sources = [...new Set(sourceIds)].map((id) =>
       this.captures.snapshot(id),
     );
+    // Preview and final confirmation must refer to the actual immutable image.
+    for (const source of sources)
+      if (source.ref.assetPath) this.captures.image(source.ref);
     if (sources.reduce((sum, s) => sum + s.text.length, 0) > 500000)
       throw new AppError("材料文字过多，请分成较小的批次");
     const references = [...new Set(referencePaths)].map((p) => {
@@ -50,14 +60,45 @@ export class Processing {
     });
     if (references.reduce((sum, n) => sum + n.content.length, 0) > 150000)
       throw new AppError("参考笔记总长度超过本批限制，请缩小范围");
-    const base = {
-      schema: "batch-snapshot/v1" as const,
-      id: randomUUID(),
-      createdAt: now(),
+    const researchProfile = snapshotResearchProfile(selection);
+    const data = {
       executor,
       instruction,
       sources,
       references,
+      ...(researchProfile ? { researchProfile } : {}),
+    };
+    return { ...data, previewHash: digest(JSON.stringify(data)) };
+  }
+  create(
+    sourceIds: string[],
+    referencePaths: string[],
+    executor: "api" | "codex",
+    instruction: string,
+    selection: unknown = GENERAL_PROFILE,
+    expectedPreviewHash?: string,
+  ) {
+    const { previewHash, ...data } = this.preview(
+      sourceIds,
+      referencePaths,
+      executor,
+      instruction,
+      selection,
+    );
+    if (
+      expectedPreviewHash !== undefined &&
+      expectedPreviewHash !== previewHash
+    )
+      throw new AppError(
+        "材料、参考笔记或科研配置在预览后已变化，请重新预览再确认",
+        409,
+        "PREVIEW_CHANGED",
+      );
+    const base = {
+      schema: "batch-snapshot/v1" as const,
+      id: randomUUID(),
+      createdAt: now(),
+      ...data,
     };
     const snapshot: BatchSnapshot = {
       ...base,
@@ -73,10 +114,15 @@ export class Processing {
         null,
         JSON.stringify(snapshot),
       );
-    for (const source of sources)
+    for (const source of data.sources)
       this.vault.db
         .prepare("INSERT INTO job_items VALUES(?,?,?,?,?)")
         .run(base.id, source.id, "pending", null, null);
+    this.vault.db
+      .prepare(
+        "INSERT INTO settings VALUES('research-profile',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+      )
+      .run(JSON.stringify(researchSelectionSchema.parse(selection)));
     return this.get(base.id);
   }
   get(id: string): Job {
@@ -84,13 +130,23 @@ export class Processing {
       .prepare("SELECT * FROM jobs WHERE id=?")
       .get(id) as any;
     if (!r) throw new AppError("任务不存在", 404);
+    const snapshot: BatchSnapshot = JSON.parse(r.snapshot);
+    if (
+      snapshot.researchProfile !== undefined &&
+      !researchSnapshotSchema.safeParse(snapshot.researchProfile).success
+    )
+      throw new AppError(
+        "批次科研配置损坏或版本不受支持，已停止交付；请保留原批次并重新预览",
+        409,
+        "INVALID_RESEARCH_PROFILE",
+      );
     return {
       id: r.id,
       state: r.state,
       executor: r.executor,
       createdAt: r.created_at,
       error: r.error,
-      snapshot: JSON.parse(r.snapshot),
+      snapshot,
       items: (
         this.vault.db
           .prepare("SELECT * FROM job_items WHERE job_id=?")
@@ -164,8 +220,9 @@ export class Processing {
           `逐项整理这份材料，分为【原文可见内容】【公式与符号】【用户想法】【AI 推断】【待核对】。保留实际页码，模糊内容标记，不补造。材料 ID：${item.id}\n来源：${JSON.stringify(item.ref)}\n记录：${item.text}`,
           images,
           controller.signal,
+          job.snapshot.researchProfile,
         );
-        const extractionPath = `${MANAGED}/Drafts/Extraction-${job.id}-${item.id}.md`;
+        const extractionPath = `${this.vault.managed}/Drafts/Extraction-${job.id}-${item.id}.md`;
         atomicWrite(
           this.vault.absolute(extractionPath),
           formatMarkdown(
@@ -261,6 +318,7 @@ export class Processing {
             prompt,
             [],
             controller.signal,
+            job.snapshot.researchProfile,
           );
           atomicWrite(
             responseFile,
@@ -356,7 +414,7 @@ export class Processing {
     // Stable identity survives a process exit between the file write and SQLite insertion.
     const hex = digest(jobId + ":" + requestId),
       id = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`,
-      relative = `${MANAGED}/Drafts/${slug(proposal.title)}--${id.slice(0, 8)}.md`;
+      relative = `${this.vault.managed}/Drafts/${slug(proposal.title)}--${id.slice(0, 8)}.md`;
     const submissionFile = path.join(
       this.vault.dataDir,
       "submissions",
@@ -491,7 +549,9 @@ export class Processing {
   rebuildProposals() {
     for (const n of this.vault
       .list()
-      .filter((n) => !n.missing && n.path.startsWith(`${MANAGED}/Drafts/`))) {
+      .filter(
+        (n) => !n.missing && n.path.startsWith(`${this.vault.managed}/Drafts/`),
+      )) {
       try {
         const doc = this.vault.read(n.path),
           p = doc.metadata.kb_proposal as any;
@@ -653,7 +713,7 @@ export class Processing {
     const target =
       p.action === "amend"
         ? p.targetPath!
-        : `${MANAGED}/${p.noteType === "learning-log" ? "Journal" : "Cards"}/${slug(p.title)}--${p.id}.md`;
+        : `${this.vault.managed}/${p.noteType === "learning-log" ? "Journal" : "Cards"}/${slug(p.title)}--${p.id}.md`;
     const current = fs.existsSync(this.vault.absolute(target))
       ? this.vault.read(target)
       : null;

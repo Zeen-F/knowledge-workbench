@@ -19,6 +19,7 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { cropRect } from "./geometry.mjs";
 import { preparePlugin } from "./plugin-setup.mjs";
+import { resolveVaultSelection } from "./vault-selection.mjs";
 import { createCredentials } from "./credentials.mjs";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -91,6 +92,7 @@ async function stopService() {
   });
 }
 async function start(vaultDir) {
+  if (vaultDir) vaultDir = resolveVaultSelection(vaultDir).scope;
   const preferredPort = service
     ? Number(new URL(service.baseUrl).port)
     : readPreferences().port;
@@ -154,13 +156,12 @@ async function start(vaultDir) {
           else if (data.action === "choose-vault") {
             await flush();
             const choice = await dialog.showOpenDialog(window, {
-              title: "选择 Obsidian 知识库",
+              title: "选择 Obsidian 知识库或子文件夹",
               properties: ["openDirectory"],
             });
             if (!choice.canceled) {
               const vaultDir = choice.filePaths[0];
-              if (!fs.existsSync(path.join(vaultDir, ".obsidian")))
-                throw new Error("请选择包含 .obsidian 的知识库");
+              resolveVaultSelection(vaultDir);
               setTimeout(
                 () =>
                   void start(vaultDir).catch((error) =>
@@ -240,15 +241,12 @@ async function request(method, route, body) {
 async function chooseVault() {
   await flush();
   const result = await dialog.showOpenDialog(window, {
-    title: "选择 Obsidian 知识库文件夹",
+    title: "选择 Obsidian 知识库或子文件夹",
     properties: ["openDirectory"],
   });
   if (result.canceled) return;
   const vaultDir = result.filePaths[0];
-  if (!fs.existsSync(path.join(vaultDir, ".obsidian")))
-    throw new Error(
-      "此文件夹没有 .obsidian。请先用 Obsidian 创建一个空库，或选择已有知识库。",
-    );
+  resolveVaultSelection(vaultDir);
   const previous = service;
   try {
     await start(vaultDir);
@@ -386,8 +384,8 @@ ipcMain.handle("capture:select", async (event, rect) => {
   }
 });
 const routes = {
-  GET: /^\/(status|notes|note|history|relations|captures|jobs|proposals|settings|paperdesk\/source)(?:\?.*)?$/,
-  POST: /^\/(refresh|notes|note\/move|history\/restore|assets|captures|jobs|jobs\/[^/]+\/(run|pause|share)|proposals\/[^/]+\/(accept|reject|rebase)|settings\/provider\/test)$/,
+  GET: /^\/(status|notes|note|history|relations|resolve-link|captures|jobs|proposals|settings|paperdesk\/source)(?:\?.*)?$/,
+  POST: /^\/(refresh|notes|note\/move|history\/restore|assets|captures|jobs|jobs\/preview|jobs\/[^/]+\/(run|pause|share)|proposals\/[^/]+\/(accept|reject|rebase)|settings\/provider\/test)$/,
   PUT: /^\/(note|draft|settings\/(provider|paperdesk|appearance)|proposals\/[^/]+)$/,
   DELETE: /^\/draft$/,
 };
