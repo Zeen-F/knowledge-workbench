@@ -145,17 +145,40 @@ try {
   const referenceDetails = page
     .locator(".evidence-item")
     .filter({ has: page.getByText("参考笔记", { exact: true }) });
-  await referenceDetails.locator("summary").click();
+  await referenceDetails.locator(":scope > summary").click();
   await expect(referenceDetails).toContainText("FROZEN_REFERENCE_SENTINEL");
   await expect(referenceDetails).not.toContainText(
     "CURRENT_REFERENCE_SENTINEL",
   );
+  await expect(
+    referenceDetails.locator(".snapshot-metadata"),
+  ).not.toHaveAttribute("open", "");
+  await referenceDetails.locator(".snapshot-metadata > summary").click();
+  await expect(
+    referenceDetails.locator(".snapshot-metadata pre"),
+  ).toBeVisible();
+  await expect(
+    referenceDetails.locator(".snapshot-metadata pre"),
+  ).toContainText("title: 参考笔记");
+  await referenceDetails.locator(".snapshot-metadata > summary").click();
+
+  await page
+    .locator(".source-review > .evidence-item > summary")
+    .nth(0)
+    .click();
+  await page
+    .locator(".source-review > .evidence-item > summary")
+    .nth(1)
+    .click();
+  await page.locator(".source-review").evaluate((element) => {
+    element.scrollTop = 0;
+  });
   await page.screenshot({
     path: path.join(evidence, "review-evidence.png"),
     fullPage: true,
   });
-  await referenceDetails.locator("summary").click();
-  await referenceDetails.locator("summary").click();
+  await referenceDetails.locator(":scope > summary").click();
+  await referenceDetails.locator(":scope > summary").click();
   await page.route("**/api/proposals/*", async (route) => {
     if (route.request().method() === "PUT") await route.abort("failed");
     else await route.continue();

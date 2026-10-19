@@ -117,3 +117,40 @@ test("read-only material renders provenance and safe Markdown without navigation
     /<a href="https:\/\/example.com"/,
   );
 });
+
+test("snapshot frontmatter is retained in collapsed metadata rather than rendered as a heading", () => {
+  const text =
+    "---\r\ntitle: Reference\r\nsource: [paper]\r\n---\r\n# Body\n\nFrozen reference";
+  const html = renderToStaticMarkup(
+    createElement(SnapshotText, { text, path: "Cards/ref.md" }),
+  );
+  assert.match(html, /<details class="snapshot-metadata"><summary>/);
+  assert.match(html, /<pre>---/);
+  assert.match(html, /source: \[paper\]/);
+  assert.match(html, /<h1>Body<\/h1>/);
+  assert.doesNotMatch(html, /<h2>title:/);
+  const incomplete = renderToStaticMarkup(
+    createElement(SnapshotText, {
+      text: "---\ntitle: Keep visible",
+      path: "Cards/ref.md",
+    }),
+  );
+  assert.doesNotMatch(incomplete, /snapshot-metadata/);
+  assert.match(incomplete, /Keep visible/);
+  for (const metadata of ["title: [broken", "a scalar", "- a list"]) {
+    const malformed = renderToStaticMarkup(
+      createElement(SnapshotText, {
+        text: `---\n${metadata}\n---\n# Body`,
+        path: "Cards/ref.md",
+      }),
+    );
+    assert.doesNotMatch(malformed, /snapshot-metadata/);
+    assert.ok(
+      malformed.includes(
+        renderMarkdown(`---\n${metadata}\n---\n# Body`, "Cards/ref.md", {
+          inertLinks: true,
+        }),
+      ),
+    );
+  }
+});

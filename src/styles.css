@@ -1913,3 +1913,15 @@ nav button:hover,
   outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
+.snapshot-metadata {
+  margin: 12px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.snapshot-metadata pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  padding: 12px;
+  background: var(--code);
+}
