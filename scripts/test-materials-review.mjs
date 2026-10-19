@@ -121,8 +121,8 @@ try {
     .getByRole("button", { name: "预览 文献标注", exact: true })
     .click();
   await expect(
-    page.getByRole("dialog").getByText("Synthetic analog paper · PDF 第 17 页"),
-  ).toBeVisible();
+    page.getByRole("dialog").locator(".material-provenance"),
+  ).toHaveText("Synthetic analog paper · PDF 第 17 页");
   await page.screenshot({
     path: path.join(evidence, "material-preview.png"),
     fullPage: true,
