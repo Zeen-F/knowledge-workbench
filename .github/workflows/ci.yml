@@ -39,6 +39,8 @@ jobs:
       - run: npx.cmd playwright install chromium
         timeout-minutes: 5
       - run: npm.cmd run test:panel
+      - run: npm.cmd run test:materials-review
+        timeout-minutes: 3
       - run: npm.cmd run test:reliability-ui
       - run: npm.cmd run test:paperdesk -- .local/paperdesk-integration
       - run: npm.cmd audit --omit=dev --audit-level=moderate
@@ -49,4 +51,5 @@ jobs:
           path: |
             output/playwright/
             output/reliability/
+            output/materials-review/
           retention-days: 7

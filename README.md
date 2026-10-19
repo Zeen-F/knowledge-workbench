@@ -10,6 +10,8 @@ Markdown 与附件保存在用户选择的 Obsidian 仓库。纸间负责 PDF �
 
 Codex 插件可以唤起本机工作台，打开原生编辑面板，编辑笔记、收集材料和人工审核草稿。安装和使用方式见 [开发与使用](docs/development.md)。
 
+支持[材料筛选、只读预览与来源对照审核](docs/materials-review.md)。
+
 支持[侧栏收起、拖动调宽与 Obsidian 子文件夹选择](docs/sidebar-and-subfolders.md)。可选的[科研笔记配置](docs/research-profiles.md)可以预览所选数据和固定版本的整理规则，再交给现有 Codex 插件或模型 API。
 
 ## 安装 Windows 预览版

@@ -41,8 +41,15 @@ import {
   shortDate,
   nativeAction,
 } from "./client";
-import { assetUrl, renderMarkdown } from "./markdown";
+import { assetUrl } from "./markdown";
 import { Editor } from "./Editor";
+import { MaterialContent, SnapshotText } from "./MaterialContent";
+import {
+  filterMaterials,
+  materialKindLabel,
+  reviewEvidence,
+  type MaterialKind,
+} from "./materials";
 import { captureShortcut, primaryModifier } from "./platform";
 import {
   recoveryKey,
@@ -57,11 +64,13 @@ export function Modal({
   children,
   onClose,
   wide = false,
+  fallbackFocus,
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
   wide?: boolean;
+  fallbackFocus?: () => void;
 }) {
   const panel = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -69,7 +78,10 @@ export function Modal({
     panel.current
       ?.querySelector<HTMLElement>("input,textarea,select,button")
       ?.focus();
-    return () => previous?.focus();
+    return () => {
+      if (previous?.isConnected) previous.focus();
+      else fallbackFocus?.();
+    };
   }, []);
   return (
     <div
@@ -168,6 +180,19 @@ export function Inbox({
     [instruction, setInstruction] = useState(""),
     [references, setReferences] = useState<string[]>([]),
     [busy, setBusy] = useState(false);
+  const materialSearch = useRef<HTMLInputElement>(null);
+  const [materialQuery, setMaterialQuery] = useState("");
+  const [materialKind, setMaterialKind] = useState<MaterialKind>("all");
+  const [selectedOnly, setSelectedOnly] = useState(false);
+  const [previewId, setPreviewId] = useState<string | null>(null);
+  const visibleMaterials = filterMaterials(
+    captures,
+    materialQuery,
+    materialKind,
+    selectedOnly,
+    selected,
+  );
+  const previewMaterial = captures.find((capture) => capture.id === previewId);
   const [deliveries, setDeliveries] = useState<Record<string, string>>({});
   const sending = useRef(new Set<string>());
   const batchBusy = useRef(false);
@@ -501,6 +526,37 @@ export function Inbox({
         <span>材料收集箱</span>
         <span>{captures.length} 份材料</span>
       </div>
+      <div className="material-tools" role="search" aria-label="筛选材料">
+        <input
+          type="search"
+          ref={materialSearch}
+          aria-label="搜索材料"
+          placeholder="搜索标题、正文或来源…"
+          value={materialQuery}
+          onChange={(e) => setMaterialQuery(e.target.value)}
+        />
+        <select
+          aria-label="材料类型"
+          value={materialKind}
+          onChange={(e) => setMaterialKind(e.target.value as MaterialKind)}
+        >
+          <option value="all">全部类型</option>
+          <option value="paperdesk">来自纸间</option>
+          <option value="image">截图与图片</option>
+          <option value="text">手写想法</option>
+        </select>
+        <button
+          className="secondary"
+          aria-pressed={selectedOnly}
+          onClick={() => setSelectedOnly((value) => !value)}
+        >
+          只看已选 {selected.length}
+        </button>
+      </div>
+      <p className="material-results" role="status">
+        显示 {visibleMaterials.length} / {captures.length} 份 · 已选{" "}
+        {selected.length} 份，筛选不会改变整理顺序
+      </p>
       {!captures.length ? (
         <div className="empty">
           <Layers3 size={38} strokeWidth={1} />
@@ -509,7 +565,7 @@ export function Inbox({
         </div>
       ) : (
         <div className="capture-grid">
-          {captures.map((c) => (
+          {visibleMaterials.map((c) => (
             <article
               key={c.id}
               className={`capture-card ${selected.includes(c.id) ? "selected" : ""}`}
@@ -525,7 +581,8 @@ export function Inbox({
               </label>
               <button
                 className="capture-preview"
-                onClick={() => onOpen(c.path)}
+                aria-label={`预览 ${c.ref.title}`}
+                onClick={() => setPreviewId(c.id)}
               >
                 {c.ref.assetPath ? (
                   <img src={assetUrl(c.ref.assetPath)} alt={c.ref.title} />
@@ -537,12 +594,8 @@ export function Inbox({
               </button>
               <div className="capture-info">
                 <small>
-                  {c.ref.kind === "paperdesk"
-                    ? "来自纸间"
-                    : c.ref.kind === "image"
-                      ? "截图与图片"
-                      : "手写想法"}{" "}
-                  · {shortDate(c.ref.capturedAt)}
+                  {materialKindLabel(c.ref.kind)} ·{" "}
+                  {shortDate(c.ref.capturedAt)}
                 </small>
                 <h3>
                   <button onClick={() => onOpen(c.path)}>{c.ref.title}</button>
@@ -554,6 +607,55 @@ export function Inbox({
             </article>
           ))}
         </div>
+      )}
+      {captures.length > 0 && visibleMaterials.length === 0 && (
+        <div className="empty material-empty">
+          <h3>没有符合条件的材料</h3>
+          <p>已选材料仍保留，可以清除筛选后继续查看。</p>
+          <button
+            className="secondary"
+            onClick={() => {
+              setMaterialQuery("");
+              setMaterialKind("all");
+              setSelectedOnly(false);
+            }}
+          >
+            清除筛选
+          </button>
+        </div>
+      )}
+      {previewMaterial && (
+        <Modal
+          title={previewMaterial.ref.title}
+          fallbackFocus={() => materialSearch.current?.focus()}
+          onClose={() => setPreviewId(null)}
+          wide
+        >
+          <div className="material-reader">
+            <MaterialContent capture={previewMaterial} />
+          </div>
+          <footer className="modal-footer">
+            <span className="muted">
+              只读预览 · 打开笔记后可编辑或回查纸间来源
+            </span>
+            <button
+              className="secondary"
+              aria-pressed={selected.includes(previewMaterial.id)}
+              onClick={() => toggle(previewMaterial.id)}
+            >
+              {selected.includes(previewMaterial.id) ? "取消选择" : "加入所选"}
+            </button>
+            <button
+              className="primary"
+              onClick={() => {
+                setPreviewId(null);
+                onOpen(previewMaterial.path);
+              }}
+            >
+              打开材料笔记
+            </button>
+          </footer>
+        </Modal>
       )}
       {jobs.length > 0 && (
         <>
@@ -876,7 +978,7 @@ export function Review({
   vaultId: string;
   proposals: Proposal[];
   jobs: Job[];
-  onOpen: (path: string) => void;
+  onOpen: (path: string) => Promise<void>;
 } & Common) {
   const [id, setId] = useState(""),
     [text, setText] = useState(""),
@@ -897,6 +999,21 @@ export function Review({
   const pending = proposals.filter((p) => p.status === "pending"),
     proposal = pending.find((p) => p.id === id) || pending[0],
     job = jobs.find((j) => j.id === proposal?.jobId);
+  const evidence = proposal ? reviewEvidence(proposal, job) : null;
+  async function openReviewNote(path: string) {
+    if (locked.current) return;
+    locked.current = true;
+    setBusy(true);
+    try {
+      await persist();
+      await onOpen(path);
+    } catch (e) {
+      notify("草稿尚未保存，请留在审核页重试：" + (e as Error).message, true);
+    } finally {
+      locked.current = false;
+      setBusy(false);
+    }
+  }
   async function persist() {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     if (saving.current) return saving.current;
@@ -1035,7 +1152,7 @@ export function Review({
       });
       await refresh();
       notify("已确认并保存笔记");
-      onOpen(saved.path);
+      await onOpen(saved.path);
     } catch (e) {
       notify((e as Error).message, true);
     } finally {
@@ -1088,28 +1205,71 @@ export function Review({
               <p className="muted">
                 {researchProfileLabel(job?.snapshot.researchProfile)}
               </p>
+              <div className="review-evidence-summary">
+                <strong>审核依据</strong>
+                <p>
+                  {evidence?.sources.length} 份原始材料 ·{" "}
+                  {evidence?.references.length} 篇参考笔记 ·{" "}
+                  {proposal.unresolved.length} 项待核对
+                </p>
+                <small>
+                  以下正文为整理时的固定快照；打开笔记查看当前版本。图片按原附件路径读取。
+                </small>
+              </div>
+              {Boolean(evidence?.missing.length) && (
+                <p role="alert" className="error-text">
+                  有 {evidence?.missing.length}{" "}
+                  份来源快照缺失，请先核对来源再接受草稿。
+                </p>
+              )}
               <h3>原始材料</h3>
-              {job?.snapshot.sources
-                .filter((s) => proposal.sourceIds.includes(s.id))
-                .map((s) => (
-                  <article key={s.id}>
-                    <h4>
-                      <button onClick={() => onOpen(s.path)}>
-                        {s.ref.title}
-                        <ArrowUpRight size={13} />
+              {evidence?.sources.map((source, index) => (
+                <details
+                  className="evidence-item"
+                  key={`${proposal.id}:${source.id}`}
+                  open
+                >
+                  <summary>
+                    <span>
+                      {index + 1}. {source.ref.title}
+                    </span>
+                    <small>{materialKindLabel(source.ref.kind)}</small>
+                  </summary>
+                  <MaterialContent capture={source} />
+                  <button
+                    className="text-button"
+                    disabled={busy}
+                    onClick={() => void openReviewNote(source.path)}
+                  >
+                    打开当前材料笔记 <ArrowUpRight size={13} />
+                  </button>
+                </details>
+              ))}
+              {Boolean(evidence?.references.length) && (
+                <>
+                  <h3>参考笔记快照</h3>
+                  {evidence?.references.map((reference) => (
+                    <details
+                      className="evidence-item"
+                      key={`${proposal.id}:${reference.path}`}
+                    >
+                      <summary>{reference.title}</summary>
+                      <p className="material-path">{reference.path}</p>
+                      <SnapshotText
+                        text={reference.content}
+                        path={reference.path}
+                      />
+                      <button
+                        className="text-button"
+                        disabled={busy}
+                        onClick={() => void openReviewNote(reference.path)}
+                      >
+                        打开当前参考笔记 <ArrowUpRight size={13} />
                       </button>
-                    </h4>
-                    {s.ref.assetPath && (
-                      <img src={assetUrl(s.ref.assetPath)} alt={s.ref.title} />
-                    )}
-                    <div
-                      className="markdown-preview"
-                      dangerouslySetInnerHTML={{
-                        __html: renderMarkdown(s.text, s.path),
-                      }}
-                    />
-                  </article>
-                ))}
+                    </details>
+                  ))}
+                </>
+              )}
               {proposal.unresolved.length > 0 && (
                 <div className="uncertainties">
                   <strong>待核对</strong>

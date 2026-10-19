@@ -1798,3 +1798,130 @@ nav button:hover,
   font-size: 11px;
   color: var(--accent);
 }
+
+/* Materials and evidence use the same quiet reading rhythm in all themes. */
+.material-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.material-tools input {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.material-tools input,
+.material-tools select {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  background: var(--surface);
+}
+.material-tools button[aria-pressed="true"] {
+  background: var(--soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.material-results,
+.material-meta,
+.material-path {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.material-results {
+  margin: 12px 0 20px;
+}
+.material-empty {
+  min-height: 180px;
+}
+.material-reader {
+  padding: 8px 24px 24px;
+  max-width: 760px;
+  margin: 0 auto;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.material-image {
+  display: block;
+  max-width: 100%;
+  max-height: 50vh;
+  object-fit: contain;
+  margin: 16px auto;
+}
+.material-body {
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.85;
+}
+.material-body pre {
+  white-space: pre-wrap;
+}
+.material-provenance {
+  border-left: 3px solid var(--accent);
+  padding-left: 12px;
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.snapshot-link {
+  color: var(--accent);
+}
+.review-evidence-summary {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.review-evidence-summary p {
+  margin: 6px 0;
+}
+.review-evidence-summary small {
+  color: var(--muted);
+}
+.evidence-item {
+  border-top: 1px solid var(--line);
+  padding: 14px 0;
+  min-width: 0;
+}
+.evidence-item summary {
+  cursor: pointer;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.evidence-item summary small {
+  display: block;
+  margin-left: 16px;
+  color: var(--muted);
+  font-weight: normal;
+}
+.evidence-item .material-body {
+  font-size: 13px;
+}
+.evidence-item .text-button {
+  margin-top: 12px;
+}
+.material-tools :focus-visible,
+.evidence-item summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.snapshot-metadata {
+  margin: 12px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.snapshot-metadata pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  padding: 12px;
+  background: var(--code);
+}
