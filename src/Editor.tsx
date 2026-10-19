@@ -13,6 +13,7 @@ import { syntaxHighlighting, HighlightStyle } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { previewField } from "./editor-preview";
+import { editorAccess } from "./editor-access";
 const defaultHighlightStyle = HighlightStyle.define([
   { tag: tags.heading, color: "var(--ink)", fontWeight: "600" },
   { tag: tags.strong, fontWeight: "700" },
@@ -51,20 +52,21 @@ export const Editor = forwardRef<EditorHandle, Props>(
     const mount = useRef<HTMLDivElement>(null),
       view = useRef<EditorView | null>(null),
       current = useRef(props),
-      mode = useRef(new Compartment());
+      mode = useRef(new Compartment()),
+      access = useRef(new Compartment());
     current.current = props;
     useImperativeHandle(
       ref,
       () => ({
         insert(value) {
           const v = view.current;
-          if (!v) return;
+          if (!v || current.current.readOnly) return;
           v.dispatch(v.state.replaceSelection(value));
           v.focus();
         },
         wrap(before, after) {
           const v = view.current;
-          if (!v) return;
+          if (!v || current.current.readOnly) return;
           const { from, to } = v.state.selection.main;
           const text = v.state.sliceDoc(from, to);
           v.dispatch({
@@ -105,7 +107,12 @@ export const Editor = forwardRef<EditorHandle, Props>(
       if (!mount.current) return;
       let disposed = false;
       const importImages = (files: File[]) => {
-        if (!files.length || !current.current.onImages) return false;
+        if (
+          !files.length ||
+          !current.current.onImages ||
+          current.current.readOnly
+        )
+          return false;
         const v = view.current!,
           onChange = props.onChange,
           notePath = props.path,
@@ -165,7 +172,7 @@ export const Editor = forwardRef<EditorHandle, Props>(
             indentWithTab,
           ]),
           EditorView.lineWrapping,
-          EditorState.readOnly.of(Boolean(props.readOnly)),
+          access.current.of(editorAccess(Boolean(props.readOnly))),
           EditorView.contentAttributes.of({
             "aria-label": "笔记编辑器",
             spellcheck: "false",
@@ -246,6 +253,13 @@ export const Editor = forwardRef<EditorHandle, Props>(
         view.current = null;
       };
     }, [props.path]);
+    useEffect(() => {
+      view.current?.dispatch({
+        effects: access.current.reconfigure(
+          editorAccess(Boolean(props.readOnly)),
+        ),
+      });
+    }, [props.readOnly, props.path]);
     useEffect(() => {
       const v = view.current;
       if (v && v.state.sliceDoc() !== props.content)

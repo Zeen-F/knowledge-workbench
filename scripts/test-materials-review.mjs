@@ -195,6 +195,10 @@ try {
     referenceDetails.getByRole("button", { name: "打开当前参考笔记" }),
   ).toBeDisabled();
   await page.getByLabel("笔记编辑器").click();
+  await expect(page.getByLabel("笔记编辑器")).toHaveAttribute(
+    "aria-readonly",
+    "true",
+  );
   await page.keyboard.type(" MUST_NOT_APPEAR_DURING_NAVIGATION");
   await expect(page.getByLabel("笔记编辑器")).not.toContainText(
     "MUST_NOT_APPEAR_DURING_NAVIGATION",
