@@ -9,7 +9,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "lint": "prettier --check server shared src tests scripts/test-reliability-ui.mjs scripts/demo.mjs",
+    "lint": "prettier --check server shared src tests scripts/test-reliability-ui.mjs scripts/demo.mjs scripts/test-materials-review.mjs",
     "typecheck": "tsc --noEmit",
     "demo": "node --import tsx scripts/demo.mjs",
     "test:reliability-ui": "node --import tsx scripts/test-reliability-ui.mjs",
@@ -33,7 +33,8 @@
     "desktop:pack:win": "npm run build && electron-builder --win --x64 --dir --publish never",
     "desktop:dist:win": "npm run build && electron-builder --win --x64 --publish never",
     "desktop:pack:mac": "npm run build && electron-builder --mac --dir --publish never",
-    "desktop:dist:mac": "npm run build && electron-builder --mac --publish never"
+    "desktop:dist:mac": "npm run build && electron-builder --mac --publish never",
+    "test:materials-review": "node --import tsx scripts/test-materials-review.mjs"
   },
   "build": {
     "appId": "com.zeen.knowledgeworkbench",

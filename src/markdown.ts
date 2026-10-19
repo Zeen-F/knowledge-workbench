@@ -27,8 +27,16 @@ export const assetUrl = (relative: string) =>
     ? "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=#kwb-asset=" +
       encodeURIComponent(relative)
     : "/api/assets?path=" + encodeURIComponent(relative);
-export function renderMarkdown(text: string, current: string) {
+export function renderMarkdown(
+  text: string,
+  current: string,
+  options: { inertLinks?: boolean } = {},
+) {
   const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
+  if (options.inertLinks) {
+    md.renderer.rules.link_open = () => '<span class="snapshot-link">';
+    md.renderer.rules.link_close = () => "</span>";
+  }
   const original = md.renderer.rules.image!;
   md.renderer.rules.image = (tokens, idx, options, env, self) => {
     const token = tokens[idx],

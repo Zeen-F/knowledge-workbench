@@ -910,7 +910,7 @@ export default function App() {
             vaultId={status.vault.id}
             proposals={proposals}
             jobs={jobs}
-            onOpen={(p) => void openNote(p)}
+            onOpen={openNote}
             refresh={refresh}
             notify={notify}
           />

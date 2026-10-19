@@ -26,6 +26,8 @@ jobs:
         timeout-minutes: 3
       - run: npx playwright install chromium
       - run: npm run test:panel
+      - run: npm run test:materials-review
+        timeout-minutes: 3
       - run: npm run test:reliability-ui
       - run: npm run desktop:dist:mac
       - name: Test packaged runtime
@@ -46,4 +48,5 @@ jobs:
             release/*.zip
             output/playwright/
             output/reliability/
+            output/materials-review/
           retention-days: 14
