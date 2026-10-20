@@ -6,13 +6,13 @@
 
 ## 下载、启动与升级
 
-在 [GitHub Releases](https://github.com/Zeen-F/knowledge-workbench/releases) 下载 Windows 安装器 `KnowledgeWorkbench-0.1.0-alpha.4-win-x64.exe`。公开桌面预览版为 **0.1.0-alpha.4**，配套 Codex 插件为 **0.1.0-alpha.5**；可下载文件与校验值以 Release 页面为准。当前源码中的材料阅读与审核改进不会自动进入旧安装包。
+本次桌面预览版为 **0.1.0-alpha.5**，配套 Codex 插件为 **0.1.0-alpha.6**。在 [Release 页面](https://github.com/Zeen-F/knowledge-workbench/releases/tag/v0.1.0-alpha.5) 下载 `KnowledgeWorkbench-0.1.0-alpha.5-win-x64.exe`；可下载文件与校验值以页面实际提供的资产为准。材料审核改进和可选山岚 V2 不会自动进入旧安装包。
 
 运行安装器后从原桌面快捷方式打开工作台，首次选择包含 `.obsidian` 的知识库根目录。完整安装包包含运行时，日常使用无需另装 Node.js。知识库和笔记保留在原位置，不放进源码目录或临时打包目录。
 
 升级前保存并正常退出旧工作台，备份 Markdown 和附件，正常断开占用安装目录的旧插件连接。安装器发现占用会退出并保留编辑窗口，不强制结束进程。更新完整应用后继续使用指向正式安装目录的快捷方式，再准备并核对插件；不要只复制 EXE。当前没有自动更新。
 
-Apple Silicon Mac 可下载 [0.1.0-alpha.4 DMG](https://github.com/Zeen-F/knowledge-workbench/releases/download/v0.1.0-alpha.4/KnowledgeWorkbench-0.1.0-alpha.4-mac-arm64.dmg)，将应用拖入「应用程序」，也可从源码构建。Mac 使用 Command 快捷键，关闭窗口后可从 Dock 重开，退出使用 ⌘Q；截图需要屏幕录制权限。当前预览构建未做 Apple 公证，详见 [Mac 适配说明](docs/macos.md)。
+Apple Silicon Mac 的 [0.1.0-alpha.5 DMG](https://github.com/Zeen-F/knowledge-workbench/releases/download/v0.1.0-alpha.5/KnowledgeWorkbench-0.1.0-alpha.5-mac-arm64.dmg) 将完整应用拖入「应用程序」，也可从源码构建。Mac 使用 Command 快捷键，关闭窗口后可从 Dock 重开，退出使用 ⌘Q；截图需要屏幕录制权限。当前预览构建未做 Apple 公证，详见 [Mac 适配说明](docs/macos.md)。
 
 ## 写作与材料审核
 
