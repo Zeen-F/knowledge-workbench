@@ -1,0 +1,172 @@
+:root[data-preview="shanlan"] .brand > div:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+}
+:root[data-preview="shanlan"] .brand strong {
+  font-size: 16px;
+  letter-spacing: 1px;
+}
+:root[data-preview="shanlan"] .vault-switch {
+  padding: 6px 8px;
+  min-height: 30px;
+  margin: 0 0 5px;
+}
+:root[data-preview="shanlan"] .note-scope {
+  display: grid;
+  grid-template-columns: 45px minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+  margin: 0 0 10px;
+}
+:root[data-preview="shanlan"] .note-scope > span {
+  font-size: 10px;
+}
+:root[data-preview="shanlan"] .note-scope select {
+  padding: 5px 4px;
+  min-height: 29px;
+  font-size: 11px;
+}
+:root[data-preview="shanlan"] .note-scope small {
+  display: none;
+}
+:root[data-preview="shanlan"] .new-note {
+  padding: 7px 10px;
+  min-height: 34px;
+  margin: 0 0 8px;
+  background: #c8d5cb;
+  border-color: #a6b7ae;
+}
+:root[data-preview="shanlan"] .search-box {
+  min-height: 34px;
+  padding: 6px 8px;
+  gap: 6px;
+}
+:root[data-preview="shanlan"] .search-box input {
+  font-size: 12px;
+  min-width: 0;
+}
+:root[data-preview="shanlan"] .search-box kbd {
+  font-size: 8px;
+  white-space: nowrap;
+}
+:root[data-preview="shanlan"] .sidebar > nav {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  margin-top: 10px;
+}
+:root[data-preview="shanlan"] .sidebar > nav button {
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 6px;
+  margin: 0;
+  font-size: 11px;
+  gap: 5px;
+}
+:root[data-preview="shanlan"] .sidebar > nav button svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+:root[data-preview="shanlan"] .sidebar > nav button span {
+  white-space: nowrap;
+}
+:root[data-preview="shanlan"] .sidebar > nav button small {
+  font-size: 10px;
+  margin-left: auto;
+}
+:root[data-preview="shanlan"] .sidebar > nav button:last-child {
+  grid-column: 1 / -1;
+}
+:root[data-preview="shanlan"] .sidebar-divider {
+  margin: 10px 5px 8px;
+  background: #a1b7b233;
+}
+:root[data-preview="shanlan"] .notes-heading {
+  padding: 0 5px 5px;
+}
+:root[data-preview="shanlan"] .note-list {
+  flex: 1;
+  min-height: 80px;
+  margin-bottom: 8px;
+  padding-right: 2px;
+}
+:root[data-preview="shanlan"] .note-folder summary {
+  min-height: 30px;
+  padding-block: 5px;
+}
+:root[data-preview="shanlan"] .note-list .note-row {
+  padding: 10px 8px;
+  min-height: 42px;
+  margin-bottom: 3px;
+}
+:root[data-preview="shanlan"] .note-list .note-row span {
+  font-size: 12px;
+  line-height: 1.6;
+}
+:root[data-preview="shanlan"] .note-list .note-row > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+:root[data-preview="shanlan"][data-shelf-density="compact"]
+  .note-list
+  .note-row {
+  padding: 7px 7px;
+  min-height: 34px;
+  margin-bottom: 2px;
+}
+:root[data-preview="shanlan"] .sidebar-footer {
+  padding: 7px 3px;
+  margin: 3px 0 0;
+  min-height: 35px;
+  border-top: 0;
+}
+:root[data-preview="shanlan"] .sidebar-footer .icon {
+  padding: 5px;
+}
+:root[data-preview="shanlan"] .start-page > h1 {
+  color: #304c52;
+}
+:root[data-preview="shanlan"] .start-page::before {
+  right: 0;
+  top: 0;
+  width: 72%;
+  height: 370px;
+  background-position: right top;
+  background-size: cover;
+  mask-image:
+    linear-gradient(90deg, transparent 2%, #000 45%),
+    linear-gradient(#000 55%, transparent);
+  mask-composite: intersect;
+}
+:root[data-preview="shanlan"] .start-actions > button {
+  border: 1px solid #b6c4b78c;
+  border-top: 2px solid #829d94;
+  background: #fcfbf4e6;
+  box-shadow: 0 8px 20px #29464706;
+  border-radius: 5px;
+}
+:root[data-preview="shanlan"] .start-actions > button:hover {
+  border-color: #769a8a;
+  background: #f8faf3;
+  box-shadow: 0 7px 19px #3d655b15;
+}
+:root[data-preview="shanlan"] .start-actions > button:nth-child(2) {
+  border-top-color: #a89578;
+  background: #f2f1e8e8;
+}
+:root[data-preview="shanlan"] .recent-notes > button {
+  background: #fbfcf5bb;
+}
+:root[data-preview="shanlan"] .app-header {
+  box-shadow: inset 0 2px #6c84812b;
+}
+@media (max-width: 850px) {
+  :root[data-preview="shanlan"] .sidebar {
+    padding: 8px 10px 0;
+  }
+  :root[data-preview="shanlan"] .sidebar > nav {
+    display: grid;
+  }
+}

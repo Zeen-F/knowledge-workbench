@@ -28,6 +28,8 @@ jobs:
       - run: npm run test:panel
       - run: npm run test:materials-review
         timeout-minutes: 3
+      - run: npm run test:shanlan
+        timeout-minutes: 3
       - run: npm run test:reliability-ui
       - run: npm run desktop:dist:mac
       - name: Test packaged runtime

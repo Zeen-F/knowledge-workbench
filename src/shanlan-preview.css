@@ -1,0 +1,343 @@
+/* 山岚: an opt-in visual study. Only ?visual=shanlan enables these rules. */
+:root[data-preview="shanlan"] {
+  --ink: #273c34;
+  --muted: #637469;
+  --paper: #f7f5ef;
+  --surface: #fffef9;
+  --side: #203c35;
+  --soft: #e5ebdf;
+  --line: #d3dbcd;
+  --green: #365e4e;
+  --accent: #3f6957;
+  --on-accent: #fffbef;
+  --hover: #e6ebdf;
+  --code: #edf0e7;
+  --error: #9a3f30;
+  --added: #e3efe0;
+  --removed: #f9e5dc;
+  color-scheme: light;
+}
+:root[data-preview="shanlan"] .sidebar {
+  color: #e2eadf;
+  background: linear-gradient(165deg, #2b4b3f, #1b3531 65%, #284237);
+  border-right: 1px solid #9b956750;
+  box-shadow: inset -5px 0 #d8c68d08;
+}
+:root[data-preview="shanlan"] .brand {
+  margin-bottom: 24px;
+}
+:root[data-preview="shanlan"] .brand strong {
+  font-family: "SimSun", serif;
+  font-size: 19px;
+  letter-spacing: 3px;
+  color: #eef0df;
+}
+:root[data-preview="shanlan"] .brand span {
+  color: #c2b68d;
+  letter-spacing: 2px;
+}
+:root[data-preview="shanlan"] .brand-mark {
+  color: #2d5041;
+  background: linear-gradient(140deg, #e1e5c9, #8caf99);
+  border: 1px solid #c7b67c;
+  box-shadow:
+    inset 0 0 0 3px #ebefd442,
+    0 5px 14px #132b2633;
+  border-radius: 11px 3px 11px 3px;
+}
+:root[data-preview="shanlan"] :is(.vault-switch, .note-scope select) {
+  background: #18372e;
+  color: #dbe5d8;
+  border-color: #58705b;
+}
+:root[data-preview="shanlan"] .new-note {
+  background: #cbd6b9;
+  color: #294738;
+  border: 1px solid #d6c896;
+  border-radius: 6px 2px 6px 2px;
+}
+:root[data-preview="shanlan"] .new-note kbd {
+  color: #4c6451;
+  border-color: #8da087;
+}
+:root[data-preview="shanlan"]
+  :is(
+    .vault-scope,
+    .note-scope > span,
+    .note-scope small,
+    .notes-heading,
+    .sidebar-footer > div,
+    .sidebar-empty
+  ) {
+  color: #bdcabc;
+}
+:root[data-preview="shanlan"] .search-box {
+  border: 1px solid #506855;
+  border-radius: 5px;
+  padding: 8px;
+  background: #18342b33;
+  color: #b8c8b7;
+}
+:root[data-preview="shanlan"] .search-box input {
+  color: #e3eddf;
+}
+:root[data-preview="shanlan"] .search-box input::placeholder {
+  color: #b9c9b5;
+}
+:root[data-preview="shanlan"] .search-box kbd {
+  border-color: #64765b;
+  color: #c4cdb8;
+}
+:root[data-preview="shanlan"] nav button {
+  color: #ccd7c7;
+  border: 1px solid transparent;
+}
+:root[data-preview="shanlan"] nav button.active {
+  background: #e1e7ca10;
+  color: #f1edcf;
+  border-color: #b4a37250;
+  box-shadow: inset 2px 0 #c3ac70;
+}
+:root[data-preview="shanlan"]
+  :is(nav button:hover, .note-list .note-row:hover, .sidebar .icon:hover) {
+  background: #365649;
+  color: #f0f0db;
+}
+:root[data-preview="shanlan"] .sidebar-divider {
+  background: #56705c77;
+}
+:root[data-preview="shanlan"] .note-list .note-row {
+  color: #b8c9b4;
+}
+:root[data-preview="shanlan"] .note-folder summary,
+:root[data-preview="shanlan"] .note-folder summary small {
+  color: #c3d2bc;
+}
+:root[data-preview="shanlan"] .note-list button span {
+  color: #d1ddca;
+}
+:root[data-preview="shanlan"] .note-list button small {
+  color: #afc2aa;
+}
+:root[data-preview="shanlan"] .note-list button.active {
+  background: #3a5948;
+  box-shadow: inset 2px 0 #bdac79;
+}
+:root[data-preview="shanlan"] .note-list button.active span {
+  color: #fff7df;
+}
+:root[data-preview="shanlan"] .sidebar-footer {
+  border-color: #536953;
+}
+:root[data-preview="shanlan"] .app-header {
+  background: #f9f7f0;
+  border-color: #c8d0bf;
+}
+:root[data-preview="shanlan"] .breadcrumbs strong {
+  font-family: "SimSun", serif;
+  font-size: 13px;
+  letter-spacing: 1px;
+}
+:root[data-preview="shanlan"] .local-badge {
+  color: #7c7048;
+  letter-spacing: 2px;
+}
+:root[data-preview="shanlan"] .tab-strip {
+  background: #ecefe5;
+}
+:root[data-preview="shanlan"] .tab-strip > div.active {
+  border-bottom-color: #a88c4d;
+}
+:root[data-preview="shanlan"] .start-page {
+  position: relative;
+  isolation: isolate;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 48px clamp(30px, 5vw, 70px) 42px;
+  max-width: none;
+  background: linear-gradient(120deg, #f8f5ec, #f1f3eb 85%);
+}
+:root[data-preview="shanlan"] .start-page::before {
+  content: "";
+  position: absolute;
+  right: 14px;
+  top: -54px;
+  width: 53%;
+  height: 360px;
+  background: url("./shanlan-landscape.svg") center / contain no-repeat;
+  opacity: 0.65;
+  pointer-events: none;
+  z-index: -1;
+}
+:root[data-preview="shanlan"] .eyebrow {
+  color: #7e704b;
+  letter-spacing: 2px;
+  font-size: 10px;
+}
+:root[data-preview="shanlan"] .start-page > h1 {
+  font:
+    36px/1.6 "SimSun",
+    serif;
+  color: #2e4d3e;
+  letter-spacing: 3px;
+  margin-top: 20px;
+}
+:root[data-preview="shanlan"] .start-page > p {
+  max-width: 530px;
+  font-size: 12px;
+  color: #576d5d;
+  line-height: 1.9;
+}
+:root[data-preview="shanlan"] .start-actions {
+  gap: 20px;
+  margin: 40px 0 30px;
+}
+:root[data-preview="shanlan"] .start-actions > button {
+  background: #fffdf5ee;
+  border: 1px solid #c9d2be;
+  padding: 26px 28px;
+  border-radius: 9px 2px 9px 2px;
+  box-shadow: 0 5px 20px #38543b07;
+}
+:root[data-preview="shanlan"] .start-actions > button:nth-child(2) {
+  background: #f2efdfed;
+  border-color: #d1c7a5;
+}
+:root[data-preview="shanlan"] .start-actions > button:hover {
+  border-color: #9cae8c;
+  box-shadow: 0 6px 20px #27493012;
+}
+:root[data-preview="shanlan"] .start-actions strong {
+  color: #365642;
+  font-size: 20px;
+  letter-spacing: 1px;
+}
+:root[data-preview="shanlan"] .start-actions span {
+  color: #64725a;
+  font-size: 12px;
+}
+:root[data-preview="shanlan"] .section-label {
+  color: #657356;
+  font-size: 11px;
+  letter-spacing: 1px;
+}
+:root[data-preview="shanlan"] .recent-notes {
+  border: 1px solid #d1d9c8;
+  border-radius: 8px 2px 8px 2px;
+  overflow: hidden;
+}
+:root[data-preview="shanlan"] .recent-notes > button {
+  padding: 16px 18px;
+  background: #fffdf5b3;
+  border-color: #d8dece;
+}
+:root[data-preview="shanlan"] .recent-notes > button:first-child {
+  border-top: 0;
+}
+:root[data-preview="shanlan"] .recent-notes > button:hover {
+  background: #e9eee1;
+}
+:root[data-preview="shanlan"] .recent-notes > button > span {
+  color: #3f5a44;
+  font-size: 13px;
+}
+:root[data-preview="shanlan"] .recent-notes small {
+  color: #687660;
+}
+:root[data-preview="shanlan"] .page-heading {
+  padding-bottom: 18px;
+  border-bottom: 1px solid #c7ceb9;
+}
+:root[data-preview="shanlan"] .page-heading h1 {
+  font-family: "SimSun", serif;
+  letter-spacing: 2px;
+}
+:root[data-preview="shanlan"]
+  :is(.capture-card, .quick-thought, .modal, .source-review, .proposal-editor) {
+  border-radius: 8px 3px 8px 3px;
+}
+:root[data-preview="shanlan"]
+  :is(.capture-card.selected, .capture-card:focus-within) {
+  border-color: #7e9876;
+  box-shadow: 0 0 0 2px #bbc8a65c;
+}
+:root[data-preview="shanlan"] :is(.primary, .secondary) {
+  border-radius: 6px 2px 6px 2px;
+}
+:root[data-preview="shanlan"] .editor-surface .cm-editor {
+  color: #293d32;
+  background: #fffdf7;
+  font-size: 14px;
+}
+:root[data-preview="shanlan"] .cm-scroller {
+  background: #fffdf7;
+}
+:root[data-preview="shanlan"] .context-panel {
+  background: #f1f2e9;
+}
+:root[data-preview="shanlan"]
+  :is(button, a, input, select, textarea):focus-visible {
+  outline: 2px solid #947031;
+  outline-offset: 3px;
+}
+:root[data-preview="shanlan"] body:has(.start-page)::after {
+  content: "山岚 · 本地视觉预览";
+  position: fixed;
+  right: 16px;
+  bottom: 10px;
+  z-index: 30;
+  padding: 5px 9px;
+  border: 1px solid #a396684d;
+  border-radius: 3px;
+  background: #f7f5eae8;
+  color: #6d633e;
+  font:
+    10px "Microsoft YaHei",
+    sans-serif;
+  letter-spacing: 1px;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: no-preference) {
+  :root[data-preview="shanlan"] .start-page {
+    animation: shanlan-enter 0.45s ease-out;
+  }
+}
+@keyframes shanlan-enter {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-preview="shanlan"] *,
+  :root[data-preview="shanlan"] *::before,
+  :root[data-preview="shanlan"] *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+@media (max-width: 900px) {
+  :root[data-preview="shanlan"] .start-page {
+    padding: 30px;
+  }
+  :root[data-preview="shanlan"] .start-page::before {
+    opacity: 0.22;
+  }
+  :root[data-preview="shanlan"] .start-page > h1 {
+    font-size: 29px;
+  }
+  :root[data-preview="shanlan"] .start-actions > button {
+    padding: 20px;
+  }
+}
+@media (max-width: 650px) {
+  :root[data-preview="shanlan"] .start-page::before {
+    display: none;
+  }
+  :root[data-preview="shanlan"] .start-actions {
+    grid-template-columns: 1fr;
+  }
+}

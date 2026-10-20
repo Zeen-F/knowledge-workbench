@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "knowledge-workbench",
-  "version": "0.1.0-alpha.5",
+  "version": "0.1.0-alpha.6",
   "description": "读取知识工作台共享的学习材料，提交可追溯的待审知识卡与学习记录。",
   "author": {
     "name": "Zeen-F"
