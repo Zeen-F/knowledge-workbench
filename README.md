@@ -29,6 +29,16 @@ Apple Silicon Mac 可下载 [0.1.0-alpha.4 DMG](https://github.com/Zeen-F/knowle
 
 操作与边界见 [材料筛选与审核](docs/materials-review.md)、[侧栏与子文件夹](docs/sidebar-and-subfolders.md) 和 [数据一致性与恢复](docs/data-consistency.md)。
 
+## 山岚 V2 外观
+
+当前源码提供山岚书桌、紧凑分类、仅按标题的快速定位，以及晨间／月下场景。快速定位只列出当前范围内的正式笔记，不把收集箱材料或待审稿当作可编辑笔记；支持 ↑↓、Enter、Esc，关闭后焦点返回入口。Ctrl／Cmd+K 展开导航侧栏并聚焦搜索。密度与场景只在本次页面内生效，不改写已保存主题。
+
+- 浏览器：在当前本机服务地址后加 `/?visual=shanlan`；去掉该参数可恢复原外观。
+- 源码桌面：构建后运行 `npm.cmd start -- --shanlan-daily`。完整桌面包也接受 `--shanlan-daily`，沿用日常配置和知识库；使用前正常退出已有窗口。
+- 隔离预览：使用 `--shanlan-preview`，可附加 `--preview-profile=完整目录路径` 指定独立配置目录。该模式使用预览配置，不继承日常选库环境变量，不注册全局截图快捷键。
+
+新外观不会自动进入已有下载包。`npm.cmd run test:shanlan` 使用临时合成知识库检查快速定位、焦点、窄窗和外观切换；浏览器回归不能替代真实模型或各平台桌面验收。
+
 ## 科研笔记工作流
 
 1. **收集证据。** 在工作台记下想法或截图；也可在纸间手动选择词句、段落或图表区域，核对实际 PDF 页后“发送到知识库”。两款应用须连接同一个 Obsidian 库。

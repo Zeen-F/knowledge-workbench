@@ -24,12 +24,36 @@ import { createCredentials } from "./credentials.mjs";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const credentials = createCredentials(safeStorage);
+const dailyShanlan =
+  process.argv.includes("--shanlan-daily") ||
+  app.getVersion().includes("shanlan-daily");
+const desktopPreview =
+  !dailyShanlan &&
+  (process.argv.includes("--shanlan-preview") ||
+    app.getVersion().includes("shanlan"));
+const shanlanAppearance = dailyShanlan || desktopPreview;
+const previewProfile =
+  desktopPreview &&
+  process.argv
+    .find((arg) => arg.startsWith("--preview-profile="))
+    ?.slice("--preview-profile=".length);
 const profileDir = path.resolve(
-  process.env.KWB_PROFILE || path.join(os.homedir(), ".knowledge-workbench"),
+  previewProfile ||
+    process.env.KWB_PROFILE ||
+    path.join(
+      os.homedir(),
+      desktopPreview
+        ? ".knowledge-workbench-shanlan-v2"
+        : ".knowledge-workbench",
+    ),
 );
 fs.mkdirSync(profileDir, { recursive: true });
 app.setPath("userData", profileDir);
-app.setName("Knowledge Workbench");
+app.setName(
+  desktopPreview ? "Knowledge Workbench Shanlan V2" : "Knowledge Workbench",
+);
+const rendererUrl = (baseUrl) =>
+  shanlanAppearance ? `${baseUrl}/?visual=shanlan` : baseUrl;
 let window,
   worker,
   service,
@@ -216,7 +240,7 @@ async function start(vaultDir) {
     vaultDir,
     port: Number(new URL(service.baseUrl).port),
   });
-  if (window) await window.loadURL(service.baseUrl);
+  if (window) await window.loadURL(rendererUrl(service.baseUrl));
 }
 async function request(method, route, body) {
   if (!service) throw new Error("本地服务未连接");
@@ -467,7 +491,10 @@ else {
             ])
           : null,
       );
-      await start(process.env.KWB_VAULT || readPreferences().vaultDir);
+      await start(
+        (desktopPreview ? undefined : process.env.KWB_VAULT) ||
+          readPreferences().vaultDir,
+      );
       window = new BrowserWindow({
         width: 1390,
         height: 900,
@@ -475,7 +502,11 @@ else {
         minHeight: 640,
         show: false,
         backgroundColor: "#fbfaf6",
-        title: "Knowledge Workbench · 知识工作台",
+        title: desktopPreview
+          ? "知识工作台 · 山岚 V2 预览"
+          : dailyShanlan
+            ? "知识工作台 · 山岚 V2"
+            : "Knowledge Workbench · 知识工作台",
         webPreferences: {
           preload: path.join(root, "desktop/preload.cjs"),
           contextIsolation: true,
@@ -484,6 +515,8 @@ else {
           spellcheck: false,
         },
       });
+      if (shanlanAppearance)
+        window.on("page-title-updated", (event) => event.preventDefault());
       window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
       window.webContents.on("will-navigate", (event, url) => {
         if (!service || new URL(url).origin !== service.baseUrl)
@@ -529,9 +562,10 @@ else {
             flushingClose = false;
           });
       });
-      await window.loadURL(service.baseUrl);
+      await window.loadURL(rendererUrl(service.baseUrl));
       if (!process.argv.includes("--background")) window.show();
       if (
+        !desktopPreview &&
         !globalShortcut.register(
           "CommandOrControl+Alt+S",
           () =>

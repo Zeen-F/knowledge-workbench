@@ -3,6 +3,7 @@ import { NoteTree } from "./NoteTree";
 import { matchesNoteSection } from "./note-navigation";
 import { RecentNotes } from "./RecentNotes";
 import { useSidebarLayout } from "./SidebarLayout";
+import { shelfPreview, ShelfJump, ShelfPreferences } from "./ShelfPreview";
 import { primaryModifier } from "./platform";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -70,6 +71,26 @@ type Tab = {
 type View = "all" | "concept" | "learning-log" | "inbox" | "review";
 export default function App() {
   const sidebar = useSidebarLayout();
+  useEffect(() => {
+    if (!shelfPreview) return;
+    const search = (event: KeyboardEvent) => {
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        event.key.toLowerCase() === "k" &&
+        !document.querySelector('dialog[open], [aria-modal="true"]')
+      ) {
+        event.preventDefault();
+        if (sidebar.collapsed) sidebar.toggle();
+        requestAnimationFrame(() =>
+          document
+            .querySelector<HTMLInputElement>(".search-box input")
+            ?.focus(),
+        );
+      }
+    };
+    window.addEventListener("keydown", search);
+    return () => window.removeEventListener("keydown", search);
+  }, [sidebar.collapsed, sidebar.toggle]);
   const [status, setStatus] = useState<any>(null),
     [notes, setNotes] = useState<NoteSummary[]>([]),
     [captures, setCaptures] = useState<Capture[]>([]),
@@ -651,6 +672,19 @@ export default function App() {
             <strong>知识工作台</strong>
             <span>KNOWLEDGE WORKBENCH</span>
           </div>
+          {shelfPreview && (
+            <ShelfJump
+              noun="笔记"
+              items={scopedNotes
+                .filter((note) => matchesNoteSection(note, "all"))
+                .map((note) => ({
+                  id: note.path,
+                  title: note.title,
+                  detail: note.path,
+                }))}
+              onOpen={openNote}
+            />
+          )}
         </div>
         <button
           className="vault-switch"
@@ -682,6 +716,7 @@ export default function App() {
             <span>笔记范围</span>
             <select
               aria-label="笔记范围"
+              title={`专属位置：${MANAGED}`}
               value={scope}
               onChange={(event) => {
                 const next = event.target.value as "workbench" | "vault";
@@ -734,9 +769,9 @@ export default function App() {
               if (["inbox", "review"].includes(view)) navigate("all");
             }}
           />
-          <kbd>⌕</kbd>
+          <kbd>{shelfPreview ? `${primaryModifier} K` : "⌕"}</kbd>
         </label>
-        <nav>
+        <nav aria-label="工作区分类">
           {sections.map((s) => (
             <button
               key={s.key}
@@ -800,6 +835,7 @@ export default function App() {
             </p>
           )}
         </div>
+        {shelfPreview && <ShelfPreferences />}
         <footer className="sidebar-footer">
           <div>
             <i className={status?.vault ? "connected" : ""} />
