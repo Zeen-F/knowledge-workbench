@@ -1,6 +1,6 @@
 {
   "name": "knowledge-workbench",
-  "version": "0.1.0-alpha.5",
+  "version": "0.1.0-alpha.6",
   "description": "Windows 与 macOS 模拟 IC 学习、写作与知识整理工作台",
   "private": true,
   "type": "module",

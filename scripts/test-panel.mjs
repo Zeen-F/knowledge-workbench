@@ -483,6 +483,53 @@ try {
   });
   assert.equal(changed._meta.panel.code, "VAULT_CHANGED");
   fs.writeFileSync(runtimePath, runtime);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await load();
+  await frame
+    .getByRole("button", { name: /^收集箱/ })
+    .first()
+    .click();
+  await frame
+    .getByRole("textbox", { name: "新收集任务名称", exact: true })
+    .fill("Panel scoped task");
+  await frame
+    .getByRole("button", { name: "新建并开始收集", exact: true })
+    .click();
+  await expect(frame.locator(".capture-card")).toHaveCount(0);
+  failRecovery = true;
+  await thought.fill("Scoped offline draft");
+  await expect(
+    frame.getByRole("button", { name: "重试恢复草稿" }),
+  ).toBeVisible();
+  await frame.getByRole("button", { name: "切换任务", exact: true }).click();
+  await frame
+    .getByRole("button", { name: "保留草稿并离开", exact: true })
+    .click();
+  await expect(
+    frame
+      .getByRole("dialog", { name: "保留当前任务的草稿", exact: true })
+      .getByRole("alert"),
+  ).toContainText("草稿未保存");
+  await expect(thought).toHaveValue("Scoped offline draft");
+  failRecovery = false;
+  await frame
+    .getByRole("button", { name: "保留草稿并离开", exact: true })
+    .click();
+  await expect(
+    frame.getByRole("dialog", { name: "选择本次收集任务", exact: true }),
+  ).toBeVisible();
+  await load();
+  await frame
+    .getByRole("button", { name: /^收集箱/ })
+    .first()
+    .click();
+  await frame
+    .getByRole("button", { name: "继续任务 Panel scoped task", exact: true })
+    .click();
+  await expect(thought).toHaveValue("Scoped offline draft");
+  await frame.getByRole("button", { name: "保存想法", exact: true }).click();
+  await expect(thought).toHaveValue("");
+  await expect(frame.locator(".capture-card")).toHaveCount(1);
   let legacyWrites = 0;
   const legacy = createServer((req, res) => {
     if (req.url !== "/api/status") legacyWrites++;
@@ -529,6 +576,7 @@ try {
     passed: true,
     checks: [
       "native-resource",
+      "task-scoped-remote-recovery-and-failed-leave",
       "real-MCP-transport",
       "sandbox-no-network",
       "host-discards-replies-after-reload",

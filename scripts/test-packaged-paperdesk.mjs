@@ -198,6 +198,7 @@ try {
   await expect(writer.locator(".toast")).toContainText("纸间资料库已绑定");
   await writer.getByRole("button", { name: "完成", exact: true }).click();
   await writer.getByRole("button", { name: /^收集箱/ }).click();
+  await writer.getByRole("button", { name: /^未分类 \/ 历史收集 ·/ }).click();
   await expect(writer.locator(".capture-card")).toHaveCount(2);
   await screenshot(writer, "installed-inbox");
   await writer
@@ -302,6 +303,7 @@ try {
   await launchWorkbench();
   assert.equal((await api("GET", "/captures")).length, 2);
   await writer.getByRole("button", { name: /^收集箱/ }).click();
+  await writer.getByRole("button", { name: /^未分类 \/ 历史收集 ·/ }).click();
   await writer
     .locator(".capture-card h3 button")
     .filter({ hasText: "第 3 页" })
