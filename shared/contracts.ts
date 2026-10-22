@@ -173,6 +173,7 @@ export interface DesktopBridge {
   openExternal(url: string): Promise<void>;
   onFlush(callback: () => Promise<void>): () => void;
   onCapture(callback: () => void): () => void;
+  onShortcutRecorded?(callback: (accelerator: string) => void): () => void;
 }
 declare global {
   interface Window {

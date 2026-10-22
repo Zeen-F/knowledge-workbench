@@ -151,6 +151,7 @@ export async function startService(options: ServiceOptions) {
       desktop: Boolean(options.desktop),
       capabilities: {
         capture: Boolean(options.desktop),
+        captureTrash: true,
         chooseVault: Boolean(options.desktop),
         plugin: Boolean(options.desktop),
         secureCredentials:
@@ -339,7 +340,21 @@ export async function startService(options: ServiceOptions) {
     const { mime } = detectImage(bytes);
     res.type(mime).send(bytes);
   });
-  app.get("/api/captures", (_req, res) => res.json(captures!.list()));
+  app.get("/api/captures", (req, res) => {
+    const query = z
+      .object({ deleted: z.enum(["true", "false"]).optional() })
+      .parse(req.query);
+    res.json(captures!.list(query.deleted === "true"));
+  });
+  for (const action of ["trash", "restore"] as const) {
+    app.post(`/api/captures/${action}`, (req, res) => {
+      const { ids } = z
+        .object({ ids: z.array(z.string().uuid()).min(1).max(100) })
+        .strict()
+        .parse(req.body);
+      res.json(captures!.setDeleted(ids, action === "trash"));
+    });
+  }
   app.post("/api/captures", (req, res) => {
     const b = z
       .object({

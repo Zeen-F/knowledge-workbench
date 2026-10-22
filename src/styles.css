@@ -1925,3 +1925,53 @@ nav button:hover,
   padding: 12px;
   background: var(--code);
 }
+
+/* Inbox deletion only changes recoverable local records. */
+.capture-trash-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 10px 0 16px;
+  font-size: 12px;
+}
+button.capture-delete {
+  color: #8a3b32;
+  background: #fbefeb;
+  border: 1px solid #dcbeb5;
+  padding: 7px 12px;
+  border-radius: 6px;
+}
+button.capture-delete:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+}
+button.capture-delete-single {
+  float: right;
+  margin: 0 0 8px 8px;
+}
+.capture-trash-list {
+  max-height: 40vh;
+  overflow: auto;
+  padding: 0 4px;
+  list-style: none;
+}
+.capture-trash-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid #a9ad9940;
+  overflow-wrap: anywhere;
+}
+.capture-trash-list button {
+  flex-shrink: 0;
+}
+.capture-trash-error,
+.capture-trash-scope {
+  color: #a24637;
+}
+.capture-trash-error button {
+  margin-left: 10px;
+}

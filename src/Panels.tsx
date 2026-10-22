@@ -16,6 +16,7 @@ import {
   Square,
   X,
 } from "lucide-react";
+import { CaptureTrash } from "./CaptureTrash";
 import { diffLines } from "diff";
 import type {
   BatchPreview,
@@ -50,7 +51,8 @@ import {
   reviewEvidence,
   type MaterialKind,
 } from "./materials";
-import { captureShortcut, primaryModifier } from "./platform";
+import { primaryModifier } from "./platform";
+import { CaptureShortcutSettings, useCaptureShortcut } from "./CaptureShortcut";
 import {
   recoveryKey,
   readRecovery,
@@ -79,10 +81,25 @@ export function Modal({
       ?.querySelector<HTMLElement>("input,textarea,select,button")
       ?.focus();
     return () => {
-      if (previous?.isConnected) previous.focus();
+      if (
+        previous?.isConnected &&
+        previous !== document.body &&
+        !previous.matches(":disabled")
+      )
+        previous.focus();
       else fallbackFocus?.();
     };
   }, []);
+  // A restored/deleted row may remove the focused button while the dialog
+  // stays open. Keep Escape and keyboard navigation inside the dialog.
+  useEffect(() => {
+    if (document.activeElement === document.body)
+      panel.current
+        ?.querySelector<HTMLElement>(
+          "button:not(:disabled),input:not(:disabled),textarea:not(:disabled),select:not(:disabled)",
+        )
+        ?.focus();
+  });
   return (
     <div
       className="modal-backdrop"
@@ -163,6 +180,7 @@ export function Inbox({
   jobs: Job[];
   onOpen: (path: string) => void;
 } & Common) {
+  const captureShortcut = useCaptureShortcut();
   type Input = { title: string; thought: string; requestId: string };
   const key = recoveryKey(vaultId, "inbox");
   const initial = readRecovery<Input>(key);
@@ -180,6 +198,11 @@ export function Inbox({
     [instruction, setInstruction] = useState(""),
     [references, setReferences] = useState<string[]>([]),
     [busy, setBusy] = useState(false);
+  const [deleteTargets, setDeleteTargets] = useState<Capture[]>([]);
+  useEffect(() => {
+    const ids = new Set(captures.map((c) => c.id));
+    setSelected((previous) => previous.filter((id) => ids.has(id)));
+  }, [captures]);
   const materialSearch = useRef<HTMLInputElement>(null);
   const [materialQuery, setMaterialQuery] = useState("");
   const [materialKind, setMaterialKind] = useState<MaterialKind>("all");
@@ -471,6 +494,8 @@ export function Inbox({
             <small>
               {capabilities.capture
                 ? captureShortcut
+                  ? `${captureShortcut.label}${captureShortcut.registered ? "" : " · 未注册"}`
+                  : "可在桌面设置快捷键"
                 : "需要桌面服务 · 可导入图片"}
             </small>
           </span>
@@ -525,7 +550,37 @@ export function Inbox({
       <div className="section-label">
         <span>材料收集箱</span>
         <span>{captures.length} 份材料</span>
+        <button
+          className="capture-delete"
+          disabled={
+            !capabilities.captureTrash ||
+            busy ||
+            !selected.length ||
+            selected.length > 100
+          }
+          title={selected.length > 100 ? "每次最多删除 100 份材料" : undefined}
+          onClick={() =>
+            setDeleteTargets(
+              selected
+                .map((id) => captures.find((c) => c.id === id))
+                .filter((c): c is Capture => Boolean(c)),
+            )
+          }
+        >
+          删除所选 {selected.length} 份
+        </button>
       </div>
+      <CaptureTrash
+        enabled={Boolean(capabilities.captureTrash)}
+        targets={deleteTargets}
+        visibleIds={visibleMaterials.map((c) => c.id)}
+        onClose={() => setDeleteTargets([])}
+        onDeleted={(ids) => {
+          setSelected((previous) => previous.filter((id) => !ids.includes(id)));
+          if (previewId && ids.includes(previewId)) setPreviewId(null);
+        }}
+        refresh={refresh}
+      />
       <div className="material-tools" role="search" aria-label="筛选材料">
         <input
           type="search"
@@ -593,6 +648,14 @@ export function Inbox({
                 )}
               </button>
               <div className="capture-info">
+                <button
+                  className="capture-delete capture-delete-single"
+                  disabled={!capabilities.captureTrash || busy}
+                  aria-label={`删除 ${c.ref.title}`}
+                  onClick={() => setDeleteTargets([c])}
+                >
+                  删除
+                </button>
                 <small>
                   {materialKindLabel(c.ref.kind)} ·{" "}
                   {shortDate(c.ref.capturedAt)}
@@ -1411,6 +1474,7 @@ export function Settings({
   };
   return (
     <Modal title="工作台设置" onClose={onClose}>
+      <CaptureShortcutSettings />
       <section className="settings-section">
         <div className="section-label">界面皮肤</div>
         <div className="theme-choices">

@@ -41,9 +41,11 @@ export class Processing {
       throw new AppError("每批请选择 1 至 100 项材料");
     if (referencePaths.length > 20)
       throw new AppError("每批最多选择 20 篇参考笔记");
-    const sources = [...new Set(sourceIds)].map((id) =>
-      this.captures.snapshot(id),
-    );
+    const sources = [...new Set(sourceIds)].map((id) => {
+      if (this.captures.isDeleted(id))
+        throw new AppError("材料已从收集箱删除，请先恢复后再整理", 409);
+      return this.captures.snapshot(id);
+    });
     // Preview and final confirmation must refer to the actual immutable image.
     for (const source of sources)
       if (source.ref.assetPath) this.captures.image(source.ref);

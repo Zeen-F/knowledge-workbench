@@ -126,10 +126,42 @@ export class Captures {
       text: row.text,
     };
   }
-  list() {
+  isDeleted(id: string) {
+    return Boolean(
+      this.vault.db
+        .prepare("SELECT 1 FROM capture_trash WHERE source_id=?")
+        .get(id),
+    );
+  }
+  setDeleted(ids: string[], deleted: boolean) {
+    const unique = [...new Set(ids)];
+    if (!unique.length || unique.length > 100)
+      throw new AppError("每次请选择 1 至 100 份材料");
+    // A local inbox tombstone never removes source Markdown, shared assets,
+    // or snapshots already referenced by jobs and generated notes.
+    this.vault.db.exec("BEGIN IMMEDIATE");
+    try {
+      for (const id of unique) this.get(id);
+      const statement = this.vault.db.prepare(
+        deleted
+          ? "INSERT OR IGNORE INTO capture_trash(source_id,deleted_at) VALUES(?,?)"
+          : "DELETE FROM capture_trash WHERE source_id=?",
+      );
+      for (const id of unique)
+        deleted ? statement.run(id, now()) : statement.run(id);
+      this.vault.db.exec("COMMIT");
+    } catch (error) {
+      this.vault.db.exec("ROLLBACK");
+      throw error;
+    }
+    return { ids: unique, deleted };
+  }
+  list(deleted = false) {
     return (
       this.vault.db
-        .prepare("SELECT id FROM sources ORDER BY rowid DESC")
+        .prepare(
+          `SELECT id FROM sources WHERE ${deleted ? "" : "NOT "}EXISTS (SELECT 1 FROM capture_trash WHERE source_id=sources.id) ORDER BY rowid DESC`,
+        )
         .all() as any[]
     ).map((r) => this.get(r.id));
   }

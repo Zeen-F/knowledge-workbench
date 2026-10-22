@@ -30,6 +30,11 @@ contextBridge.exposeInMainWorld("workbench", {
   chooseVault: () => request("DESKTOP", "/vault/choose"),
   capture: () => request("DESKTOP", "/capture"),
   openExternal: (url) => request("DESKTOP", "/external", { url }),
+  onShortcutRecorded(callback) {
+    const listener = (_event, accelerator) => callback(accelerator);
+    ipcRenderer.on("workbench:shortcut-recorded", listener);
+    return () => ipcRenderer.removeListener("workbench:shortcut-recorded", listener);
+  },
   onCapture(callback) {
     const listener = () => callback();
     ipcRenderer.on("workbench:captured", listener);
