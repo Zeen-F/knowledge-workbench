@@ -38,6 +38,8 @@ jobs:
         working-directory: .local/paperdesk-integration
       - run: npx.cmd playwright install chromium
         timeout-minutes: 5
+      - run: npm.cmd run test:desktop-readiness
+        timeout-minutes: 2
       - run: npm.cmd run test:inbox-controls
         timeout-minutes: 3
       - run: npm.cmd run test:panel
