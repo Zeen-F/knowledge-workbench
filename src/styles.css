@@ -1975,3 +1975,40 @@ button.capture-delete-single {
 .capture-trash-error button {
   margin-left: 10px;
 }
+
+.collection-task-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+}
+.collection-task-bar h2 {
+  margin: 0.2rem 0;
+  font-size: 1.1rem;
+}
+.collection-task-bar > .button-row {
+  margin-left: auto;
+}
+.collection-task-list {
+  list-style: none;
+  padding: 0;
+  max-height: 40vh;
+  overflow: auto;
+}
+.collection-task-list li {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.7rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.collection-task-list li span {
+  flex: 1;
+}
+.collection-task-list small {
+  display: block;
+  opacity: 0.7;
+  margin-top: 0.3rem;
+}

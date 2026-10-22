@@ -67,7 +67,7 @@ try {
     await app.evaluate(() => {
       for (const cover of globalThis.__captureCovers) cover.showInactive();
     });
-    await page.evaluate(() => window.workbench.capture());
+    await page.evaluate(() => window.workbench.capture("history"));
     const overlays = app
       .windows()
       .filter((p) => p.url().endsWith("/capture.html"));
@@ -80,7 +80,7 @@ try {
     await overlay.mouse.up();
     await expect.poll(async () => (await captures()).length).toBe(i + 1);
   }
-  await page.evaluate(() => window.workbench.capture());
+  await page.evaluate(() => window.workbench.capture("history"));
   const canceled = app.windows().find((p) => p.url().endsWith("/capture.html"));
   await canceled.keyboard.press("Escape").catch((error) => {
     if (!canceled.isClosed()) throw error;

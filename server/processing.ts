@@ -36,11 +36,13 @@ export class Processing {
     executor: "api" | "codex",
     instruction: string,
     selection: unknown = GENERAL_PROFILE,
+    taskId = "history",
   ): BatchPreview {
     if (!sourceIds.length || sourceIds.length > 100)
       throw new AppError("每批请选择 1 至 100 项材料");
     if (referencePaths.length > 20)
       throw new AppError("每批最多选择 20 篇参考笔记");
+    this.captures.assertScope(sourceIds, taskId);
     const sources = [...new Set(sourceIds)].map((id) => {
       if (this.captures.isDeleted(id))
         throw new AppError("材料已从收集箱删除，请先恢复后再整理", 409);
@@ -64,6 +66,7 @@ export class Processing {
       throw new AppError("参考笔记总长度超过本批限制，请缩小范围");
     const researchProfile = snapshotResearchProfile(selection);
     const data = {
+      ...(taskId !== "history" ? { taskId } : {}),
       executor,
       instruction,
       sources,
@@ -79,6 +82,7 @@ export class Processing {
     instruction: string,
     selection: unknown = GENERAL_PROFILE,
     expectedPreviewHash?: string,
+    taskId = "history",
   ) {
     const { previewHash, ...data } = this.preview(
       sourceIds,
@@ -86,6 +90,7 @@ export class Processing {
       executor,
       instruction,
       selection,
+      taskId,
     );
     if (
       expectedPreviewHash !== undefined &&

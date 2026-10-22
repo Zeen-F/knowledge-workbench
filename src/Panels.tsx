@@ -164,6 +164,8 @@ type Common = {
 };
 
 export function Inbox({
+  taskId,
+  registerGuard,
   vaultId,
   capabilities,
   captures,
@@ -173,6 +175,8 @@ export function Inbox({
   notify,
   refresh,
 }: {
+  taskId: string;
+  registerGuard: (guard: () => Promise<boolean>) => void;
   vaultId: string;
   capabilities: Record<string, boolean>;
   captures: Capture[];
@@ -182,7 +186,7 @@ export function Inbox({
 } & Common) {
   const captureShortcut = useCaptureShortcut();
   type Input = { title: string; thought: string; requestId: string };
-  const key = recoveryKey(vaultId, "inbox");
+  const key = recoveryKey(vaultId, "inbox", taskId === "history" ? "" : taskId);
   const initial = readRecovery<Input>(key);
   const [selected, setSelected] = useState<string[]>([]),
     [thought, setThought] = useState(initial?.thought || ""),
@@ -319,6 +323,7 @@ export function Inbox({
     try {
       for (const f of files) {
         await api("POST", "/captures", {
+          taskId,
           title: f.name.replace(/\.[^.]+$/, ""),
           image: await fileData(f),
           text: "",
@@ -340,6 +345,7 @@ export function Inbox({
     setInputState("正在保存到知识库…");
     try {
       await api("POST", "/captures", {
+        taskId,
         title:
           sent.title.trim() || sent.thought.trim().split("\n")[0].slice(0, 35),
         text: sent.thought,
@@ -360,6 +366,7 @@ export function Inbox({
       } else setInputState("上次输入已保存，新增输入保留为本机草稿");
       await refresh();
       notify("想法已保存");
+      return !input.current.thought && !input.current.title;
     } catch (e) {
       setInputState("保存失败，输入已保留；可重试");
       notify((e as Error).message, true);
@@ -368,6 +375,38 @@ export function Inbox({
       setBusy(false);
     }
   };
+  const [leavePrompt, setLeavePrompt] = useState(false);
+  const leaveResolve = useRef<((value: boolean) => void) | null>(null);
+  const [leaveError, setLeaveError] = useState("");
+  registerGuard(async () => {
+    if (inputBusy.current || batchBusy.current || busy) {
+      notify("请等待当前操作完成", true);
+      return false;
+    }
+    if (!input.current.title && !input.current.thought) return true;
+    if (leaveResolve.current) return false;
+    setLeavePrompt(true);
+    setLeaveError("");
+    return new Promise<boolean>((resolve) => {
+      leaveResolve.current = resolve;
+    });
+  });
+  function resolveLeave(value: boolean) {
+    setLeavePrompt(false);
+    const resolve = leaveResolve.current;
+    leaveResolve.current = null;
+    resolve?.(value);
+  }
+  async function retainAndLeave() {
+    try {
+      const durable = writeRecovery(key, input.current);
+      if (durable === false) throw new Error("本机恢复空间不可用");
+      await flushRecovery(key);
+      resolveLeave(true);
+    } catch (e) {
+      setLeaveError("草稿未保存，请留在当前任务：" + (e as Error).message);
+    }
+  }
   const toggle = (id: string) =>
     setSelected((s) =>
       s.includes(id) ? s.filter((i) => i !== id) : [...s, id],
@@ -388,6 +427,7 @@ export function Inbox({
     setBusy(true);
     try {
       const result = await api<BatchPreview>("POST", "/jobs/preview", {
+        taskId,
         sourceIds: selected,
         referencePaths: references,
         executor,
@@ -408,6 +448,7 @@ export function Inbox({
     setBusy(true);
     try {
       const job = await api<Job>("POST", "/jobs", {
+        taskId,
         sourceIds: selected,
         referencePaths: references,
         executor,
@@ -480,10 +521,10 @@ export function Inbox({
           onClick={() => {
             if (window.workbench)
               void window.workbench
-                .capture()
+                .capture(taskId)
                 .catch((e) => notify(e.message, true));
             else
-              void nativeAction("capture").catch((e) =>
+              void nativeAction("capture", taskId).catch((e) =>
                 notify(e.message, true),
               );
           }}
@@ -570,7 +611,26 @@ export function Inbox({
           删除所选 {selected.length} 份
         </button>
       </div>
+      {leavePrompt && (
+        <Modal title="保留当前任务的草稿" onClose={() => resolveLeave(false)}>
+          <p>切换或离开前，选择保存到当前任务，或保留仅本机可恢复的草稿。</p>
+          {leaveError && <p role="alert">{leaveError}</p>}
+          <button onClick={() => resolveLeave(false)}>留在当前任务</button>
+          <button onClick={() => void retainAndLeave()}>保留草稿并离开</button>
+          <button
+            disabled={busy || !thought.trim()}
+            onClick={() =>
+              void createThought().then((saved) => {
+                if (saved) resolveLeave(true);
+              })
+            }
+          >
+            保存想法并离开
+          </button>
+        </Modal>
+      )}
       <CaptureTrash
+        taskId={taskId}
         enabled={Boolean(capabilities.captureTrash)}
         targets={deleteTargets}
         visibleIds={visibleMaterials.map((c) => c.id)}

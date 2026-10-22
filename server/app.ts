@@ -48,7 +48,7 @@ export type ServiceOptions = {
   secureStorage?: boolean;
   encrypt?: (value: string) => Promise<string>;
   decrypt?: (value: string) => Promise<string>;
-  desktop?: (action: string) => Promise<any>;
+  desktop?: (action: string, taskId?: string) => Promise<any>;
 };
 export async function startService(options: ServiceOptions) {
   // Reject invalid selections before opening a database or starting a service.
@@ -186,13 +186,19 @@ export async function startService(options: ServiceOptions) {
   );
   app.post("/api/desktop/action", async (req, res) => {
     if (!options.desktop) throw new AppError("此入口需要已启动的桌面服务");
-    res.json(
-      await options.desktop(
-        z
-          .object({ action: z.enum(["choose-vault", "capture", "plugin"]) })
-          .parse(req.body).action,
-      ),
-    );
+    const body = z
+      .object({
+        action: z.enum(["choose-vault", "capture", "plugin"]),
+        taskId: z.union([z.literal("history"), z.string().uuid()]).optional(),
+      })
+      .strict()
+      .parse(req.body);
+    if (body.action === "capture") {
+      if (!body.taskId) throw new AppError("请先选择本次收集任务", 409);
+      if (!captures || captures.task(body.taskId).ended)
+        throw new AppError("请先继续收集任务", 409);
+    }
+    res.json(await options.desktop(body.action, body.taskId));
   });
   app.use("/api", (_req, _res, next) => {
     if (!vault) throw new AppError("请先打开知识库", 409, "NO_VAULT");
@@ -340,19 +346,41 @@ export async function startService(options: ServiceOptions) {
     const { mime } = detectImage(bytes);
     res.type(mime).send(bytes);
   });
+  const taskIdSchema = z.union([z.literal("history"), z.string().uuid()]);
+  app.get("/api/collection-tasks", (_req, res) => res.json(captures!.tasks()));
+  app.post("/api/collection-tasks", (req, res) => {
+    const b = z
+      .object({ name: z.string().trim().min(1).max(100) })
+      .strict()
+      .parse(req.body);
+    res.status(201).json(captures!.createTask(b.name));
+  });
+  app.post("/api/collection-tasks/state", (req, res) => {
+    const b = z
+      .object({ taskId: taskIdSchema, ended: z.boolean() })
+      .strict()
+      .parse(req.body);
+    res.json(captures!.setTaskEnded(b.taskId, b.ended));
+  });
   app.get("/api/captures", (req, res) => {
     const query = z
-      .object({ deleted: z.enum(["true", "false"]).optional() })
+      .object({
+        deleted: z.enum(["true", "false"]).optional(),
+        taskId: taskIdSchema.optional(),
+      })
       .parse(req.query);
-    res.json(captures!.list(query.deleted === "true"));
+    res.json(captures!.list(query.deleted === "true", query.taskId));
   });
   for (const action of ["trash", "restore"] as const) {
     app.post(`/api/captures/${action}`, (req, res) => {
-      const { ids } = z
-        .object({ ids: z.array(z.string().uuid()).min(1).max(100) })
+      const { ids, taskId } = z
+        .object({
+          ids: z.array(z.string().uuid()).min(1).max(100),
+          taskId: taskIdSchema.default("history"),
+        })
         .strict()
         .parse(req.body);
-      res.json(captures!.setDeleted(ids, action === "trash"));
+      res.json(captures!.setDeleted(ids, action === "trash", taskId));
     });
   }
   app.post("/api/captures", (req, res) => {
@@ -361,6 +389,7 @@ export async function startService(options: ServiceOptions) {
         title: z.string().min(1).max(200),
         text: z.string().max(500000).default(""),
         requestId: z.string().uuid().optional(),
+        taskId: taskIdSchema.default("history"),
         image: z
           .string()
           .max(28 * 1024 * 1024)
@@ -371,6 +400,7 @@ export async function startService(options: ServiceOptions) {
   });
   app.get("/api/jobs", (_req, res) => res.json(processing!.list()));
   const batchInputSchema = z.object({
+    taskId: taskIdSchema.default("history"),
     sourceIds: z.array(z.string().uuid()),
     referencePaths: z.array(relativePathSchema).default([]),
     executor: z.enum(["api", "codex"]),
@@ -387,6 +417,7 @@ export async function startService(options: ServiceOptions) {
         b.executor,
         b.instruction,
         b.researchSelection,
+        b.taskId,
       ),
     );
   });
@@ -402,6 +433,7 @@ export async function startService(options: ServiceOptions) {
           b.instruction,
           b.researchSelection,
           b.expectedPreviewHash,
+          b.taskId,
         ),
       );
   });

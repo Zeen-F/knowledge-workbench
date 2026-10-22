@@ -35,7 +35,8 @@
     "desktop:pack:mac": "npm run build && electron-builder --mac --dir --publish never",
     "desktop:dist:mac": "npm run build && electron-builder --mac --publish never",
     "test:materials-review": "node --import tsx scripts/test-materials-review.mjs",
-    "test:shanlan": "node --import tsx scripts/test-shanlan.mjs"
+    "test:shanlan": "node --import tsx scripts/test-shanlan.mjs",
+    "test:inbox-controls": "node --import tsx scripts/test-inbox-controls.mjs"
   },
   "build": {
     "appId": "com.zeen.knowledgeworkbench",

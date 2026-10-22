@@ -96,8 +96,9 @@ export const prettyState = (value: string) =>
 
 export async function nativeAction(
   action: "choose-vault" | "capture" | "plugin",
+  taskId?: string,
 ) {
-  const result = await api("POST", "/desktop/action", { action });
+  const result = await api("POST", "/desktop/action", { action, taskId });
   if (result?.reopening) {
     await new Promise((r) => setTimeout(r, 1700));
     window.location.reload();

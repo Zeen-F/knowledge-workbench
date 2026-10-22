@@ -28,8 +28,13 @@ async function request(method, route, body) {
 contextBridge.exposeInMainWorld("workbench", {
   invoke: request,
   chooseVault: () => request("DESKTOP", "/vault/choose"),
-  capture: () => request("DESKTOP", "/capture"),
+  capture: (taskId) => request("DESKTOP", "/capture", {taskId}),
   openExternal: (url) => request("DESKTOP", "/external", { url }),
+  onCollectionRequested(callback) {
+    const listener = () => callback();
+    ipcRenderer.on("workbench:collection-requested", listener);
+    return () => ipcRenderer.removeListener("workbench:collection-requested", listener);
+  },
   onShortcutRecorded(callback) {
     const listener = (_event, accelerator) => callback(accelerator);
     ipcRenderer.on("workbench:shortcut-recorded", listener);

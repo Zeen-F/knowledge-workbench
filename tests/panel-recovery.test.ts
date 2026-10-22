@@ -111,9 +111,21 @@ test("native feature gate rejects old or incomplete services", () => {
     () => requirePanelFeatures({ features: { reliability: 1, recovery: 1 } }),
     /桌面服务版本较旧/,
   );
+  assert.throws(
+    () =>
+      requirePanelFeatures({
+        features: { reliability: 1, recovery: 1, researchProfiles: 1 },
+      }),
+    /桌面服务版本较旧/,
+  );
   assert.doesNotThrow(() =>
     requirePanelFeatures({
-      features: { reliability: 1, recovery: 1, researchProfiles: 1 },
+      features: {
+        reliability: 1,
+        recovery: 1,
+        researchProfiles: 1,
+        collectionTasks: 1,
+      },
     }),
   );
 });

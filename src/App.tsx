@@ -55,7 +55,8 @@ import {
   nativeAction,
 } from "./client";
 import { Editor, type EditorHandle } from "./Editor";
-import { Diff, Inbox, Modal, Review, Settings } from "./Panels";
+import { CollectionInbox } from "./CollectionInbox";
+import { Diff, Modal, Review, Settings } from "./Panels";
 import { assetUrl } from "./markdown";
 
 type Tab = {
@@ -131,10 +132,21 @@ export default function App() {
     toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const openGeneration = useRef(0),
     refreshGeneration = useRef(0);
-  function navigate(next: View) {
+  const [collectionEntry, setCollectionEntry] = useState(0);
+  const inboxLeave = useRef<(() => Promise<boolean>) | null>(null);
+  async function navigate(next: View) {
+    if (inboxLeave.current && !(await inboxLeave.current())) return;
     openGeneration.current++;
+    if (next === "inbox") setCollectionEntry((n) => n + 1);
     setView(next);
   }
+  useEffect(
+    () =>
+      window.workbench?.onCollectionRequested?.(() => {
+        setView("inbox");
+      }),
+    [],
+  );
   activeRef.current = active;
   statusRef.current = status;
   const render = () => draw((n) => n + 1);
@@ -231,6 +243,7 @@ export default function App() {
     }
   }
   async function openNote(path: string) {
+    if (inboxLeave.current && !(await inboxLeave.current())) return;
     const generation = ++openGeneration.current;
     try {
       if (!tabs.current[path]) {
@@ -929,8 +942,14 @@ export default function App() {
             </small>
           </div>
         ) : view === "inbox" ? (
-          <Inbox
-            key={status.vault.id}
+          <CollectionInbox
+            registerLeave={(guard) => {
+              inboxLeave.current = guard;
+            }}
+            onCancel={() => {
+              setView("all");
+            }}
+            key={status.vault.id + ":" + collectionEntry}
             vaultId={status.vault.id}
             capabilities={status.capabilities || {}}
             captures={captures}

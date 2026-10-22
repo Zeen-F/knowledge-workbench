@@ -87,6 +87,7 @@ try {
     .getByRole("button", { name: /收集箱/ })
     .first()
     .click();
+  await page.getByRole("button", { name: /^未分类 \/ 历史收集 ·/ }).click();
   await page.getByLabel("选择 文献标注", { exact: true }).check();
   await page.getByLabel("搜索材料", { exact: true }).fill("MOS");
   await expect(page.locator(".capture-card")).toHaveCount(1);

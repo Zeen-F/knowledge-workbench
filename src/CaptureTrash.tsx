@@ -4,6 +4,7 @@ import { api } from "./client";
 import { Modal } from "./Panels";
 
 export function CaptureTrash({
+  taskId,
   targets,
   visibleIds,
   onClose,
@@ -11,6 +12,7 @@ export function CaptureTrash({
   refresh,
   enabled,
 }: {
+  taskId: string;
   targets: Capture[];
   visibleIds: string[];
   onClose: () => void;
@@ -27,7 +29,12 @@ export function CaptureTrash({
   const locked = useRef(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const load = async () =>
-    setTrash(await api<Capture[]>("GET", "/captures?deleted=true"));
+    setTrash(
+      await api<Capture[]>(
+        "GET",
+        "/captures?deleted=true&taskId=" + encodeURIComponent(taskId),
+      ),
+    );
   async function showTrash() {
     if (locked.current) return;
     setOpen(true);
@@ -52,6 +59,7 @@ export function CaptureTrash({
     try {
       await api("POST", deleted ? "/captures/trash" : "/captures/restore", {
         ids,
+        taskId,
       });
       saved = true;
       if (deleted) {

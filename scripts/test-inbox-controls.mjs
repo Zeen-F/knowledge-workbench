@@ -53,7 +53,9 @@ try {
   });
   manager.initialize();
   browser = await chromium.launch({
-    channel: process.env.KWB_TEST_BROWSER || "chrome",
+    channel:
+      process.env.KWB_TEST_BROWSER ||
+      (process.platform === "win32" ? "msedge" : undefined),
     headless: true,
   });
   const page = await browser.newPage({
@@ -98,6 +100,7 @@ try {
   );
   await page.goto(service.baseUrl + "/?visual=shanlan");
   await page.getByRole("button", { name: /^收集箱/ }).click();
+  await page.getByRole("button", { name: /^未分类 \/ 历史收集 ·/ }).click();
   const card = page.locator(".capture-card");
   await expect(card).toHaveCount(2);
   await page.getByLabel("选择 Alpha synthetic", { exact: true }).check();
@@ -159,6 +162,7 @@ try {
   await expect(card).toHaveCount(1);
   await page.reload();
   await page.getByRole("button", { name: /^收集箱/ }).click();
+  await page.getByRole("button", { name: /^未分类 \/ 历史收集 ·/ }).click();
   await page
     .getByRole("button", { name: "已删除 · 恢复材料", exact: true })
     .click();
@@ -230,6 +234,55 @@ try {
   await expect(page.locator(".capture-actions")).toContainText(
     manager.status().label,
   );
+  await page.getByRole("button", { name: "结束本次收集", exact: true }).click();
+  await page
+    .getByRole("textbox", { name: "新收集任务名称", exact: true })
+    .fill("Study A");
+  await page
+    .getByRole("button", { name: "新建并开始收集", exact: true })
+    .click();
+  await expect(card).toHaveCount(0);
+  await page
+    .getByRole("textbox", { name: "快速记录想法", exact: true })
+    .fill("A retained draft");
+  await page.getByRole("button", { name: "切换任务", exact: true }).click();
+  await page
+    .getByRole("button", { name: "保留草稿并离开", exact: true })
+    .click();
+  await page
+    .getByRole("textbox", { name: "新收集任务名称", exact: true })
+    .fill("Study B");
+  await page
+    .getByRole("button", { name: "新建并开始收集", exact: true })
+    .click();
+  await expect(
+    page.getByRole("textbox", { name: "快速记录想法", exact: true }),
+  ).toHaveValue("");
+  await page
+    .getByRole("textbox", { name: "快速记录想法", exact: true })
+    .fill("B saved thought");
+  await page.getByRole("button", { name: "保存想法", exact: true }).click();
+  await expect(card).toHaveCount(1);
+  await page.getByRole("button", { name: "切换任务", exact: true }).click();
+  await page
+    .getByRole("button", { name: "继续任务 Study A", exact: true })
+    .click();
+  await expect(card).toHaveCount(0);
+  await expect(
+    page.getByRole("textbox", { name: "快速记录想法", exact: true }),
+  ).toHaveValue("A retained draft");
+  await page.getByRole("button", { name: "保存想法", exact: true }).click();
+  await expect(card).toHaveCount(1);
+  await expect(card).toContainText("A retained draft");
+  await page.getByRole("button", { name: /^全部笔记/ }).click();
+  await page.getByRole("button", { name: /^收集箱/ }).click();
+  await expect(
+    page.getByRole("dialog", { name: "选择本次收集任务", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "取消收集", exact: true }).click();
+  await expect(
+    page.getByRole("dialog", { name: "选择本次收集任务", exact: true }),
+  ).toHaveCount(0);
   assert.equal(captures, 0);
   for (let i = 0; i < originals.length; i++)
     assert.deepEqual(

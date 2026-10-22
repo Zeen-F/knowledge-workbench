@@ -259,15 +259,18 @@ try {
     .getByRole("button", { name: /^收集箱/ })
     .first()
     .click();
+  await frame.getByRole("button", { name: /^未分类 \/ 历史收集 ·/ }).click();
   await expect(frame.locator(".capture-card img")).toBeVisible();
   await expect(frame.getByRole("button", { name: /框选截图/ })).toBeDisabled();
   await expect(frame.locator(".vault-switch")).toBeDisabled();
   const thought = frame.getByLabel("快速记录想法");
-  const inbox = () =>
-    frame
+  const inbox = async () => {
+    await frame
       .getByRole("button", { name: /^收集箱/ })
       .first()
       .click();
+    await frame.getByRole("button", { name: /^未分类 \/ 历史收集 ·/ }).click();
+  };
   await thought.fill("面板恢复想法");
   await expect(
     frame.getByText("已保留本机恢复草稿，尚未写入知识库", { exact: true }),

@@ -27,7 +27,8 @@ if (parent) {
           ...data.options,
           encrypt: (v) => cryptoRequest("encrypt", v),
           decrypt: (v) => cryptoRequest("decrypt", v),
-          desktop: (action) => cryptoRequest(action, "", "desktop"),
+          desktop: (action, taskId) =>
+            cryptoRequest(action, taskId || "", "desktop"),
         });
         parent.postMessage({
           type: "ready",

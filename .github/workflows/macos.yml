@@ -25,6 +25,8 @@ jobs:
       - run: npm run test:ui
         timeout-minutes: 3
       - run: npx playwright install chromium
+      - run: npm run test:inbox-controls
+        timeout-minutes: 3
       - run: npm run test:panel
       - run: npm run test:materials-review
         timeout-minutes: 3

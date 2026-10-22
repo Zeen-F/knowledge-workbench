@@ -58,6 +58,7 @@ export const sourceRefSchema = z.object({
   mime: z.enum(["image/png", "image/jpeg", "image/webp"]).optional(),
   paperdesk: paperdeskRefSchema.optional(),
   transferId: z.string().uuid().optional(),
+  taskId: z.string().uuid().optional(),
 });
 export type SourceRef = z.infer<typeof sourceRefSchema>;
 export type NoteSummary = {
@@ -80,6 +81,14 @@ export type Note = NoteSummary & {
   body?: string;
   draft?: { content: string; baseHash: string; savedAt: string };
 };
+export type CollectionTask = {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  ended: boolean;
+  count: number;
+};
 export type Capture = {
   id: string;
   path: string;
@@ -89,6 +98,7 @@ export type Capture = {
 };
 export type BatchSnapshot = {
   schema: "batch-snapshot/v1";
+  taskId?: string;
   id: string;
   createdAt: string;
   executor: "api" | "codex";
@@ -168,11 +178,12 @@ export interface DesktopBridge {
   panel?: boolean;
   sendToCodex?(text: string): Promise<void>;
   chooseVault(): Promise<void>;
-  capture(): Promise<void>;
+  capture(taskId?: string): Promise<void>;
   invoke(method: string, route: string, body?: unknown): Promise<any>;
   openExternal(url: string): Promise<void>;
   onFlush(callback: () => Promise<void>): () => void;
   onCapture(callback: () => void): () => void;
+  onCollectionRequested?(callback: () => void): () => void;
   onShortcutRecorded?(callback: (accelerator: string) => void): () => void;
 }
 declare global {

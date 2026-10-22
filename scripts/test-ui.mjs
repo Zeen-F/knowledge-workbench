@@ -147,6 +147,7 @@ try {
     .getByRole("button", { name: /收集箱/ })
     .first()
     .click();
+  await page.getByRole("button", { name: /^未分类 \/ 历史收集 ·/ }).click();
   await page
     .getByLabel("快速记录想法")
     .fill("这是一份隔离测试想法，需要保留来源。");
@@ -299,13 +300,21 @@ try {
         ),
       )
       .toBe(true);
+    await page.evaluate(() => window.workbench.capture());
+    await expect(
+      page.getByRole("dialog", { name: "选择本次收集任务", exact: true }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "取消收集", exact: true }).click();
+    await expect(
+      page.getByRole("dialog", { name: "选择本次收集任务", exact: true }),
+    ).toHaveCount(0);
     const permission = await app.evaluate(({ systemPreferences }) =>
       systemPreferences.getMediaAccessStatus("screen"),
     );
     console.log(JSON.stringify({ screenPermission: permission }));
     if (["denied", "restricted"].includes(permission)) {
       const error = await page.evaluate(() =>
-        window.workbench.capture().then(
+        window.workbench.capture("history").then(
           () => "unexpected-success",
           (error) => error.message,
         ),
@@ -370,12 +379,62 @@ try {
       dialog.showMessageBox = globalThis.__originalDialog;
     });
   }
+  checkpoint("collection-tasks-native");
+  await reopened
+    .getByRole("button", { name: /收集箱/ })
+    .first()
+    .click();
+  await expect(
+    reopened.getByRole("dialog", { name: "选择本次收集任务", exact: true }),
+  ).toBeVisible();
+  await reopened
+    .getByRole("textbox", { name: "新收集任务名称", exact: true })
+    .fill("Native synthetic study");
+  await reopened
+    .getByRole("button", { name: "新建并开始收集", exact: true })
+    .click();
+  await expect(reopened.locator(".capture-card")).toHaveCount(0);
+  await reopened
+    .getByLabel("快速记录想法")
+    .fill("Native task isolated thought");
+  await reopened.getByRole("button", { name: "保存想法", exact: true }).click();
+  await expect(reopened.locator(".capture-card")).toHaveCount(1);
+  await reopened
+    .getByRole("button", { name: "结束本次收集", exact: true })
+    .click();
+  await expect(
+    reopened.getByRole("dialog", { name: "选择本次收集任务", exact: true }),
+  ).toBeVisible();
+  await reopened
+    .getByRole("button", {
+      name: "继续任务 Native synthetic study",
+      exact: true,
+    })
+    .click();
+  await expect(reopened.locator(".capture-card")).toContainText(
+    "Native task isolated thought",
+  );
+  await reopened
+    .getByRole("button", {
+      name: "删除 Native task isolated thought",
+      exact: true,
+    })
+    .click();
+  await reopened
+    .getByRole("button", { name: "确认删除 1 份", exact: true })
+    .click();
+  await expect(reopened.locator(".capture-card")).toHaveCount(0);
+  await reopened
+    .getByRole("button", { name: "撤销删除 1 份", exact: true })
+    .click();
+  await expect(reopened.locator(".capture-card")).toHaveCount(1);
   checkpoint("completed");
   console.log(
     JSON.stringify({
       passed: true,
       checks: [
         "desktop-start",
+        "task-selection-scope-end-resume-trash-undo",
         "live-math",
         "rendered-link-click-navigation",
         "four-themes",
