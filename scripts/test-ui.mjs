@@ -4,6 +4,8 @@ import path from "node:path";
 import os from "node:os";
 import { createRequire } from "node:module";
 import { seed } from "./seed.mjs";
+import { createHash } from "node:crypto";
+import { waitForDesktopReady } from "./desktop-readiness.mjs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { preparePlugin } from "../desktop/plugin-setup.mjs";
@@ -25,6 +27,10 @@ const executable = fs.realpathSync.native(
 );
 let app;
 const errors = [];
+const startup = [];
+const expectedVaultId = createHash("sha256")
+  .update(fs.realpathSync(vault))
+  .digest("hex");
 let stage = "launch";
 const checkpoint = (name) => {
   stage = name;
@@ -45,6 +51,9 @@ try {
   });
   const page = await app.firstWindow();
   page.on("pageerror", (error) => errors.push(error.message));
+  checkpoint("renderer-ready");
+  startup.push(await waitForDesktopReady(page, expectedVaultId));
+  console.log(JSON.stringify({ desktopReadiness: startup.at(-1) }));
   checkpoint("workspace-scope");
   await expect(page.getByLabel("笔记范围")).toHaveValue("workbench");
   await expect(page.locator(".note-list")).toContainText("专属笔记");
@@ -337,6 +346,8 @@ try {
   app.context().setDefaultTimeout(15000);
   app.context().setDefaultNavigationTimeout(30000);
   const reopened = await app.firstWindow();
+  startup.push(await waitForDesktopReady(reopened, expectedVaultId));
+  console.log(JSON.stringify({ desktopReadiness: startup.at(-1) }));
   await expect(reopened.getByLabel("笔记范围")).toHaveValue("workbench");
   await expect(reopened.locator(".note-list")).not.toContainText(
     "从一个问题开始",
@@ -461,12 +472,60 @@ try {
             ]
           : []),
       ],
+      startup,
       screenshots: "output/playwright",
     }),
   );
 } catch (error) {
   console.error(`Desktop test failed during ${stage}:`, error);
   const page = app?.windows()[0];
+  const diagnostic = {
+    stage,
+    error: String(error.message),
+    startup,
+    rendererErrors: errors,
+  };
+  try {
+    const saved = JSON.parse(
+      fs.readFileSync(path.join(profile, "runtime.json"), "utf8"),
+    );
+    diagnostic.runtime = {
+      service: saved.service,
+      apiVersion: saved.apiVersion,
+      expectedVault: saved.vaultId === expectedVaultId,
+    };
+  } catch {
+    diagnostic.runtime = { available: false };
+  }
+  if (page) {
+    let timer;
+    try {
+      diagnostic.renderer = await Promise.race([
+        page.evaluate(() => ({
+          readyState: document.readyState,
+          preload: typeof window.workbench?.invoke === "function",
+          scopeControl: Boolean(
+            document.querySelector('select[aria-label="笔记范围"]'),
+          ),
+        })),
+        new Promise((resolve) => {
+          timer = setTimeout(
+            () => resolve({ observationTimedOut: true }),
+            3000,
+          );
+        }),
+      ]);
+    } catch (failure) {
+      diagnostic.renderer = { error: String(failure.message) };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  console.error(JSON.stringify({ desktopFailure: diagnostic }));
+  fs.writeFileSync(
+    "output/playwright/desktop-failure.json",
+    JSON.stringify(diagnostic, null, 2),
+  );
   if (page)
     await page
       .screenshot({

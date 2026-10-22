@@ -63,6 +63,14 @@ jobs:
         run: |
           $paperdesk = (Resolve-Path '.local/paperdesk-package/release/win-unpacked/Paperdesk.exe').Path
           npm.cmd run test:packaged-paperdesk -- --paperdesk-exe "$paperdesk" --workbench-exe "$env:KWB_TEST_EXE" --paperdesk-source .local/paperdesk-package
+      - name: Preserve synthetic startup failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-startup-diagnostics
+          path: output/playwright/desktop-failure.*
+          if-no-files-found: ignore
+          retention-days: 7
       - uses: actions/upload-artifact@v4
         with:
           name: windows-x64-preview
