@@ -23,6 +23,59 @@ import type { Vault } from "./vault.ts";
 
 export class Captures {
   constructor(public vault: Vault) {}
+  task(id: string) {
+    if (id === "history")
+      return { id, name: "未分类 / 历史收集", ended: false };
+    const row = this.vault.db
+      .prepare("SELECT * FROM collection_tasks WHERE id=?")
+      .get(id) as any;
+    if (!row) throw new AppError("收集任务不存在", 404);
+    return {
+      id: row.id,
+      name: row.name,
+      ended: Boolean(row.ended),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+  tasks() {
+    return (
+      this.vault.db
+        .prepare(
+          "SELECT id FROM collection_tasks ORDER BY updated_at DESC,rowid DESC",
+        )
+        .all() as any[]
+    ).map(({ id }) => ({
+      ...this.task(id),
+      count: this.list(false, id).length,
+    }));
+  }
+  createTask(name: string) {
+    name = name.trim();
+    if (!name || name.length > 100)
+      throw new AppError("请输入 1 至 100 字的任务名称");
+    const id = randomUUID(),
+      time = now();
+    this.vault.db
+      .prepare("INSERT INTO collection_tasks VALUES(?,?,?,?,0)")
+      .run(id, name, time, time);
+    return this.task(id);
+  }
+  setTaskEnded(id: string, ended: boolean) {
+    this.task(id);
+    if (id === "history") return this.task(id);
+    this.vault.db
+      .prepare("UPDATE collection_tasks SET ended=?,updated_at=? WHERE id=?")
+      .run(ended ? 1 : 0, now(), id);
+    return this.task(id);
+  }
+  assertScope(ids: string[], taskId = "history") {
+    this.task(taskId);
+    for (const id of ids)
+      if ((this.get(id).ref.taskId || "history") !== taskId)
+        throw new AppError("材料不属于当前收集任务，请重新选择", 409);
+  }
+
   asset(bytes: Buffer) {
     const { mime, ext } = detectImage(bytes),
       hash = digest(bytes),
@@ -43,15 +96,25 @@ export class Captures {
     image,
     ref: supplied,
     requestId,
+    taskId = "history",
   }: {
     title: string;
     text?: string;
     image?: string;
     ref?: Partial<SourceRef>;
     requestId?: string;
+    taskId?: string;
   }) {
+    if (this.task(taskId).ended) throw new AppError("请先继续该收集任务", 409);
     const id = requestId || supplied?.id || randomUUID();
-    const requestHash = digest(JSON.stringify({ title, text, image }));
+    const requestHash = digest(
+      JSON.stringify({
+        title,
+        text,
+        image,
+        ...(taskId !== "history" ? { taskId } : {}),
+      }),
+    );
     const requestFile = path.join(
       this.vault.dataDir,
       "capture-requests",
@@ -83,6 +146,7 @@ export class Captures {
       title,
       ...supplied,
       ...asset,
+      ...(taskId !== "history" ? { taskId } : {}),
     });
     const relative = `${this.vault.managed}/Inbox/${ref.capturedAt.slice(0, 10)}--${slug(title)}--${id.slice(0, 8)}.md`;
     if (requestId && fs.existsSync(this.vault.absolute(relative))) {
@@ -126,12 +190,47 @@ export class Captures {
       text: row.text,
     };
   }
-  list() {
+  isDeleted(id: string) {
+    return Boolean(
+      this.vault.db
+        .prepare("SELECT 1 FROM capture_trash WHERE source_id=?")
+        .get(id),
+    );
+  }
+  setDeleted(ids: string[], deleted: boolean, taskId = "history") {
+    const unique = [...new Set(ids)];
+    if (!unique.length || unique.length > 100)
+      throw new AppError("每次请选择 1 至 100 份材料");
+    // A local inbox tombstone never removes source Markdown, shared assets,
+    // or snapshots already referenced by jobs and generated notes.
+    this.vault.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.assertScope(unique, taskId);
+      const statement = this.vault.db.prepare(
+        deleted
+          ? "INSERT OR IGNORE INTO capture_trash(source_id,deleted_at) VALUES(?,?)"
+          : "DELETE FROM capture_trash WHERE source_id=?",
+      );
+      for (const id of unique)
+        deleted ? statement.run(id, now()) : statement.run(id);
+      this.vault.db.exec("COMMIT");
+    } catch (error) {
+      this.vault.db.exec("ROLLBACK");
+      throw error;
+    }
+    return { ids: unique, deleted };
+  }
+  list(deleted = false, taskId?: string) {
+    if (taskId) this.task(taskId);
     return (
       this.vault.db
-        .prepare("SELECT id FROM sources ORDER BY rowid DESC")
+        .prepare(
+          `SELECT id FROM sources WHERE ${deleted ? "" : "NOT "}EXISTS (SELECT 1 FROM capture_trash WHERE source_id=sources.id) ORDER BY rowid DESC`,
+        )
         .all() as any[]
-    ).map((r) => this.get(r.id));
+    )
+      .map((r) => this.get(r.id))
+      .filter((c) => !taskId || (c.ref.taskId || "history") === taskId);
   }
   snapshot(id: string) {
     const before = this.get(id),

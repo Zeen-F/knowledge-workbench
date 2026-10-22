@@ -1,6 +1,6 @@
 {
   "name": "knowledge-workbench",
-  "version": "0.1.0-alpha.5",
+  "version": "0.1.0-alpha.6",
   "description": "Windows 与 macOS 模拟 IC 学习、写作与知识整理工作台",
   "private": true,
   "type": "module",
@@ -35,7 +35,8 @@
     "desktop:pack:mac": "npm run build && electron-builder --mac --dir --publish never",
     "desktop:dist:mac": "npm run build && electron-builder --mac --publish never",
     "test:materials-review": "node --import tsx scripts/test-materials-review.mjs",
-    "test:shanlan": "node --import tsx scripts/test-shanlan.mjs"
+    "test:shanlan": "node --import tsx scripts/test-shanlan.mjs",
+    "test:inbox-controls": "node --import tsx scripts/test-inbox-controls.mjs"
   },
   "build": {
     "appId": "com.zeen.knowledgeworkbench",
@@ -95,7 +96,7 @@
     "express": "5.3.0",
     "katex": "0.19.0",
     "lucide-react": "1.54.0",
-    "markdown-it": "15.0.2",
+    "markdown-it": "15.0.3",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "yaml": "2.9.1",

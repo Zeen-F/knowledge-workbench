@@ -144,6 +144,7 @@ export async function importAndReturn(
   await expect(page.locator(".toast")).toContainText("纸间资料库已绑定");
   await page.getByRole("button", { name: "完成", exact: true }).click();
   await page.getByRole("button", { name: /^收集箱/ }).click();
+  await page.getByRole("button", { name: /^未分类 \/ 历史收集 ·/ }).click();
   await expect(page.locator(".capture-card")).toHaveCount(2);
   await page.screenshot({
     path: path.join(evidence, "paperdesk-import-inbox.png"),

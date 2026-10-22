@@ -1,3 +1,5 @@
+import { createCollectionSession } from './collection-session.mjs';
+import { readAppearance } from './appearance.mjs';
 import {
   app,
   BrowserWindow,
@@ -21,6 +23,7 @@ import { cropRect } from "./geometry.mjs";
 import { preparePlugin } from "./plugin-setup.mjs";
 import { resolveVaultSelection } from "./vault-selection.mjs";
 import { createCredentials } from "./credentials.mjs";
+import { createCaptureShortcuts } from "./shortcuts.mjs";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const credentials = createCredentials(safeStorage);
@@ -31,7 +34,7 @@ const desktopPreview =
   !dailyShanlan &&
   (process.argv.includes("--shanlan-preview") ||
     app.getVersion().includes("shanlan"));
-const shanlanAppearance = dailyShanlan || desktopPreview;
+
 const previewProfile =
   desktopPreview &&
   process.argv
@@ -52,6 +55,7 @@ app.setPath("userData", profileDir);
 app.setName(
   desktopPreview ? "Knowledge Workbench Shanlan V2" : "Knowledge Workbench",
 );
+const shanlanAppearance = dailyShanlan || desktopPreview || readAppearance(profileDir);
 const rendererUrl = (baseUrl) =>
   shanlanAppearance ? `${baseUrl}/?visual=shanlan` : baseUrl;
 let window,
@@ -69,6 +73,18 @@ const writeJson = (file, data) => {
   fs.writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 0o600 });
   fs.renameSync(tmp, file);
 };
+const shortcutsFile = path.join(profileDir, "shortcuts.json");
+const captureShortcuts = createCaptureShortcuts({
+  shortcuts: globalShortcut,
+  enabled: !desktopPreview,
+  read: () => {
+    try { return JSON.parse(fs.readFileSync(shortcutsFile, "utf8")); }
+    catch (error) { if (error.code === "ENOENT") return {}; throw error; }
+  },
+  write: (value) => writeJson(shortcutsFile, value),
+  capture: () => void beginCapture().catch((error) => dialog.showErrorBox("截图未开始", error.message)),
+  record: (accelerator) => window?.webContents.send("workbench:shortcut-recorded", accelerator),
+});
 function validSender(event) {
   if (
     !window ||
@@ -168,8 +184,7 @@ async function start(vaultDir) {
         try {
           let value;
           if (data.action === "capture") {
-            await beginCapture();
-            value = { ok: true };
+            value = await beginCapture(data.value || undefined);
           } else if (data.action === "plugin")
             value = preparePlugin({
               root,
@@ -296,9 +311,23 @@ function endCapture() {
   window?.show();
   window?.focus();
 }
-async function beginCapture() {
+let captureTaskId = null;
+const collectionSession = createCollectionSession({
+  validate: async taskId => {
+    if (!service?.vaultId) throw new Error("请先选择知识库");
+    if (taskId === "history") return;
+    const tasks = await request("GET", "/collection-tasks");
+    const task = tasks.find(t => t.id === taskId);
+    if (!task || task.ended) throw new Error("请先选择或继续有效的收集任务");
+  },
+  choose: () => {window?.show();window?.focus();window?.webContents.send("workbench:collection-requested");},
+  capture: taskId => captureForTask(taskId),
+});
+const beginCapture = taskId => collectionSession.start(taskId);
+async function captureForTask(taskId) {
   if (captureActive) return;
   if (!service?.vaultId) throw new Error("请先选择知识库");
+  captureTaskId = taskId;
   const permissionMessage =
     "请在系统设置 → 隐私与安全性 → 屏幕与系统音频录制中允许 Knowledge Workbench 录制屏幕，然后退出并重新打开应用。开发模式请允许 Electron。";
   if (
@@ -397,6 +426,7 @@ ipcMain.handle("capture:select", async (event, rect) => {
       title: `截图 ${new Date().toLocaleString("zh-CN")}`,
       text: "",
       image: bytes.toString("base64"),
+      taskId: captureTaskId,
     });
     window?.webContents.send("workbench:captured", capture);
     return { saved: true };
@@ -408,8 +438,8 @@ ipcMain.handle("capture:select", async (event, rect) => {
   }
 });
 const routes = {
-  GET: /^\/(status|notes|note|history|relations|resolve-link|captures|jobs|proposals|settings|paperdesk\/source)(?:\?.*)?$/,
-  POST: /^\/(refresh|notes|note\/move|history\/restore|assets|captures|jobs|jobs\/preview|jobs\/[^/]+\/(run|pause|share)|proposals\/[^/]+\/(accept|reject|rebase)|settings\/provider\/test)$/,
+  GET: /^\/(status|notes|note|history|relations|resolve-link|collection-tasks|captures|jobs|proposals|settings|paperdesk\/source)(?:\?.*)?$/,
+  POST: /^\/(refresh|notes|note\/move|history\/restore|assets|collection-tasks|collection-tasks\/state|captures|captures\/(trash|restore)|jobs|jobs\/preview|jobs\/[^/]+\/(run|pause|share)|proposals\/[^/]+\/(accept|reject|rebase)|settings\/provider\/test)$/,
   PUT: /^\/(note|draft|settings\/(provider|paperdesk|appearance)|proposals\/[^/]+)$/,
   DELETE: /^\/draft$/,
 };
@@ -420,7 +450,18 @@ ipcMain.handle("workbench:request", async (event, input) => {
     if (method === "DESKTOP") {
       let data;
       if (route === "/vault/choose") data = await chooseVault();
-      else if (route === "/capture") data = await beginCapture();
+      else if (route === "/capture") data = await beginCapture(body?.taskId);
+      else if (route === "/collection") {
+        if (captureActive) throw new Error("请先完成或取消当前截图");
+        if (!body?.taskId) { collectionSession.clear(); data={active:false}; }
+        else data=await collectionSession.select(body.taskId);
+      }
+      else if (route === "/shortcuts") {
+        if (!body || body.action === "read") data = captureShortcuts.status();
+        else if (body.action === "record") data = captureShortcuts.setRecording(body.recording);
+        else if (body.action === "save") data = captureShortcuts.save(body.accelerator);
+        else throw new Error("快捷键操作不存在");
+      }
       else if (route === "/external") {
         const u = new URL(body.url);
         if (
@@ -562,24 +603,12 @@ else {
             flushingClose = false;
           });
       });
+      captureShortcuts.initialize();
+      window.on("blur", () => captureShortcuts.setRecording(false));
+      window.webContents.on("did-start-navigation", () => { captureShortcuts.setRecording(false); collectionSession.clear(); });
       await window.loadURL(rendererUrl(service.baseUrl));
       if (!process.argv.includes("--background")) window.show();
-      if (
-        !desktopPreview &&
-        !globalShortcut.register(
-          "CommandOrControl+Alt+S",
-          () =>
-            void beginCapture().catch((error) =>
-              dialog.showErrorBox("截图未开始", error.message),
-            ),
-        )
-      )
-        dialog.showMessageBox(window, {
-          type: "info",
-          message: `${process.platform === "darwin" ? "⌘ + ⌥ + S" : "Ctrl + Alt + S"} 已被其他程序占用`,
-          detail: "仍可从收集箱点击“框选截图”。",
-          buttons: ["知道了"],
-        });
+
     })
     .catch(async (error) => {
       console.error("Knowledge Workbench startup failed:", error);

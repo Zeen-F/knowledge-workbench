@@ -16,6 +16,7 @@ import {
   Square,
   X,
 } from "lucide-react";
+import { CaptureTrash } from "./CaptureTrash";
 import { diffLines } from "diff";
 import type {
   BatchPreview,
@@ -50,7 +51,8 @@ import {
   reviewEvidence,
   type MaterialKind,
 } from "./materials";
-import { captureShortcut, primaryModifier } from "./platform";
+import { primaryModifier } from "./platform";
+import { CaptureShortcutSettings, useCaptureShortcut } from "./CaptureShortcut";
 import {
   recoveryKey,
   readRecovery,
@@ -79,10 +81,25 @@ export function Modal({
       ?.querySelector<HTMLElement>("input,textarea,select,button")
       ?.focus();
     return () => {
-      if (previous?.isConnected) previous.focus();
+      if (
+        previous?.isConnected &&
+        previous !== document.body &&
+        !previous.matches(":disabled")
+      )
+        previous.focus();
       else fallbackFocus?.();
     };
   }, []);
+  // A restored/deleted row may remove the focused button while the dialog
+  // stays open. Keep Escape and keyboard navigation inside the dialog.
+  useEffect(() => {
+    if (document.activeElement === document.body)
+      panel.current
+        ?.querySelector<HTMLElement>(
+          "button:not(:disabled),input:not(:disabled),textarea:not(:disabled),select:not(:disabled)",
+        )
+        ?.focus();
+  });
   return (
     <div
       className="modal-backdrop"
@@ -147,6 +164,8 @@ type Common = {
 };
 
 export function Inbox({
+  taskId,
+  registerGuard,
   vaultId,
   capabilities,
   captures,
@@ -156,6 +175,8 @@ export function Inbox({
   notify,
   refresh,
 }: {
+  taskId: string;
+  registerGuard: (guard: () => Promise<boolean>) => void;
   vaultId: string;
   capabilities: Record<string, boolean>;
   captures: Capture[];
@@ -163,8 +184,9 @@ export function Inbox({
   jobs: Job[];
   onOpen: (path: string) => void;
 } & Common) {
+  const captureShortcut = useCaptureShortcut();
   type Input = { title: string; thought: string; requestId: string };
-  const key = recoveryKey(vaultId, "inbox");
+  const key = recoveryKey(vaultId, "inbox", taskId === "history" ? "" : taskId);
   const initial = readRecovery<Input>(key);
   const [selected, setSelected] = useState<string[]>([]),
     [thought, setThought] = useState(initial?.thought || ""),
@@ -180,6 +202,11 @@ export function Inbox({
     [instruction, setInstruction] = useState(""),
     [references, setReferences] = useState<string[]>([]),
     [busy, setBusy] = useState(false);
+  const [deleteTargets, setDeleteTargets] = useState<Capture[]>([]);
+  useEffect(() => {
+    const ids = new Set(captures.map((c) => c.id));
+    setSelected((previous) => previous.filter((id) => ids.has(id)));
+  }, [captures]);
   const materialSearch = useRef<HTMLInputElement>(null);
   const [materialQuery, setMaterialQuery] = useState("");
   const [materialKind, setMaterialKind] = useState<MaterialKind>("all");
@@ -296,6 +323,7 @@ export function Inbox({
     try {
       for (const f of files) {
         await api("POST", "/captures", {
+          taskId,
           title: f.name.replace(/\.[^.]+$/, ""),
           image: await fileData(f),
           text: "",
@@ -317,6 +345,7 @@ export function Inbox({
     setInputState("正在保存到知识库…");
     try {
       await api("POST", "/captures", {
+        taskId,
         title:
           sent.title.trim() || sent.thought.trim().split("\n")[0].slice(0, 35),
         text: sent.thought,
@@ -337,6 +366,7 @@ export function Inbox({
       } else setInputState("上次输入已保存，新增输入保留为本机草稿");
       await refresh();
       notify("想法已保存");
+      return !input.current.thought && !input.current.title;
     } catch (e) {
       setInputState("保存失败，输入已保留；可重试");
       notify((e as Error).message, true);
@@ -345,6 +375,38 @@ export function Inbox({
       setBusy(false);
     }
   };
+  const [leavePrompt, setLeavePrompt] = useState(false);
+  const leaveResolve = useRef<((value: boolean) => void) | null>(null);
+  const [leaveError, setLeaveError] = useState("");
+  registerGuard(async () => {
+    if (inputBusy.current || batchBusy.current || busy) {
+      notify("请等待当前操作完成", true);
+      return false;
+    }
+    if (!input.current.title && !input.current.thought) return true;
+    if (leaveResolve.current) return false;
+    setLeavePrompt(true);
+    setLeaveError("");
+    return new Promise<boolean>((resolve) => {
+      leaveResolve.current = resolve;
+    });
+  });
+  function resolveLeave(value: boolean) {
+    setLeavePrompt(false);
+    const resolve = leaveResolve.current;
+    leaveResolve.current = null;
+    resolve?.(value);
+  }
+  async function retainAndLeave() {
+    try {
+      const durable = writeRecovery(key, input.current);
+      if (durable === false) throw new Error("本机恢复空间不可用");
+      await flushRecovery(key);
+      resolveLeave(true);
+    } catch (e) {
+      setLeaveError("草稿未保存，请留在当前任务：" + (e as Error).message);
+    }
+  }
   const toggle = (id: string) =>
     setSelected((s) =>
       s.includes(id) ? s.filter((i) => i !== id) : [...s, id],
@@ -365,6 +427,7 @@ export function Inbox({
     setBusy(true);
     try {
       const result = await api<BatchPreview>("POST", "/jobs/preview", {
+        taskId,
         sourceIds: selected,
         referencePaths: references,
         executor,
@@ -385,6 +448,7 @@ export function Inbox({
     setBusy(true);
     try {
       const job = await api<Job>("POST", "/jobs", {
+        taskId,
         sourceIds: selected,
         referencePaths: references,
         executor,
@@ -457,10 +521,10 @@ export function Inbox({
           onClick={() => {
             if (window.workbench)
               void window.workbench
-                .capture()
+                .capture(taskId)
                 .catch((e) => notify(e.message, true));
             else
-              void nativeAction("capture").catch((e) =>
+              void nativeAction("capture", taskId).catch((e) =>
                 notify(e.message, true),
               );
           }}
@@ -471,6 +535,8 @@ export function Inbox({
             <small>
               {capabilities.capture
                 ? captureShortcut
+                  ? `${captureShortcut.label}${captureShortcut.registered ? "" : " · 未注册"}`
+                  : "可在桌面设置快捷键"
                 : "需要桌面服务 · 可导入图片"}
             </small>
           </span>
@@ -525,7 +591,56 @@ export function Inbox({
       <div className="section-label">
         <span>材料收集箱</span>
         <span>{captures.length} 份材料</span>
+        <button
+          className="capture-delete"
+          disabled={
+            !capabilities.captureTrash ||
+            busy ||
+            !selected.length ||
+            selected.length > 100
+          }
+          title={selected.length > 100 ? "每次最多删除 100 份材料" : undefined}
+          onClick={() =>
+            setDeleteTargets(
+              selected
+                .map((id) => captures.find((c) => c.id === id))
+                .filter((c): c is Capture => Boolean(c)),
+            )
+          }
+        >
+          删除所选 {selected.length} 份
+        </button>
       </div>
+      {leavePrompt && (
+        <Modal title="保留当前任务的草稿" onClose={() => resolveLeave(false)}>
+          <p>切换或离开前，选择保存到当前任务，或保留仅本机可恢复的草稿。</p>
+          {leaveError && <p role="alert">{leaveError}</p>}
+          <button onClick={() => resolveLeave(false)}>留在当前任务</button>
+          <button onClick={() => void retainAndLeave()}>保留草稿并离开</button>
+          <button
+            disabled={busy || !thought.trim()}
+            onClick={() =>
+              void createThought().then((saved) => {
+                if (saved) resolveLeave(true);
+              })
+            }
+          >
+            保存想法并离开
+          </button>
+        </Modal>
+      )}
+      <CaptureTrash
+        taskId={taskId}
+        enabled={Boolean(capabilities.captureTrash)}
+        targets={deleteTargets}
+        visibleIds={visibleMaterials.map((c) => c.id)}
+        onClose={() => setDeleteTargets([])}
+        onDeleted={(ids) => {
+          setSelected((previous) => previous.filter((id) => !ids.includes(id)));
+          if (previewId && ids.includes(previewId)) setPreviewId(null);
+        }}
+        refresh={refresh}
+      />
       <div className="material-tools" role="search" aria-label="筛选材料">
         <input
           type="search"
@@ -593,6 +708,14 @@ export function Inbox({
                 )}
               </button>
               <div className="capture-info">
+                <button
+                  className="capture-delete capture-delete-single"
+                  disabled={!capabilities.captureTrash || busy}
+                  aria-label={`删除 ${c.ref.title}`}
+                  onClick={() => setDeleteTargets([c])}
+                >
+                  删除
+                </button>
                 <small>
                   {materialKindLabel(c.ref.kind)} ·{" "}
                   {shortDate(c.ref.capturedAt)}
@@ -1411,6 +1534,7 @@ export function Settings({
   };
   return (
     <Modal title="工作台设置" onClose={onClose}>
+      <CaptureShortcutSettings />
       <section className="settings-section">
         <div className="section-label">界面皮肤</div>
         <div className="theme-choices">

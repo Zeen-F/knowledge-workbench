@@ -32,17 +32,25 @@ try {
   });
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto(service.baseUrl);
-  const inbox = () =>
-    page
+  const inbox = async () => {
+    await page
       .getByRole("button", { name: /收集箱/ })
       .first()
       .click();
+    await page.getByRole("button", { name: /^未分类 \/ 历史收集 ·/ }).click();
+  };
   const all = async () => {
-    await page.getByLabel("笔记范围").selectOption("vault");
+    const draft = page.getByLabel("快速记录想法");
+    const hasDraft = (await draft.count()) && Boolean(await draft.inputValue());
     await page
       .getByRole("button", { name: /全部笔记/ })
       .first()
       .click();
+    if (hasDraft)
+      await page
+        .getByRole("button", { name: "保留草稿并离开", exact: true })
+        .click();
+    await page.getByLabel("笔记范围").selectOption("vault");
   };
   await inbox();
   await page.getByLabel("想法标题").fill("未保存标题");

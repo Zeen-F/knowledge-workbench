@@ -16,7 +16,7 @@ const profileDir =
   process.env.KWB_PROFILE || path.join(os.homedir(), ".knowledge-workbench");
 const server = new McpServer({
   name: "knowledge-workbench-mcp-server",
-  version: "0.1.0-alpha.6",
+  version: "0.1.0-alpha.7",
 });
 registerPanel(server, profileDir, path.join(__dirname, "../ui/workbench.html"));
 async function api(route: string, body?: unknown) {

@@ -6,13 +6,13 @@
 
 ## 下载、启动与升级
 
-本次桌面预览版为 **0.1.0-alpha.5**，配套 Codex 插件为 **0.1.0-alpha.6**。在 [Release 页面](https://github.com/Zeen-F/knowledge-workbench/releases/tag/v0.1.0-alpha.5) 下载 `KnowledgeWorkbench-0.1.0-alpha.5-win-x64.exe`；可下载文件与校验值以页面实际提供的资产为准。材料审核改进和可选山岚 V2 不会自动进入旧安装包。
+本次桌面预览版为 **0.1.0-alpha.6**，配套 Codex 插件为 **0.1.0-alpha.7**。在 [Release 页面](https://github.com/Zeen-F/knowledge-workbench/releases/tag/v0.1.0-alpha.6) 下载 `KnowledgeWorkbench-0.1.0-alpha.6-win-x64.exe`；可下载文件与校验值以页面实际提供的资产为准。材料审核改进和可选山岚 V2 不会自动进入旧安装包。
 
 运行安装器后从原桌面快捷方式打开工作台，首次选择包含 `.obsidian` 的知识库根目录。完整安装包包含运行时，日常使用无需另装 Node.js。知识库和笔记保留在原位置，不放进源码目录或临时打包目录。
 
 升级前保存并正常退出旧工作台，备份 Markdown 和附件，正常断开占用安装目录的旧插件连接。安装器发现占用会退出并保留编辑窗口，不强制结束进程。更新完整应用后继续使用指向正式安装目录的快捷方式，再准备并核对插件；不要只复制 EXE。当前没有自动更新。
 
-Apple Silicon Mac 的 [0.1.0-alpha.5 DMG](https://github.com/Zeen-F/knowledge-workbench/releases/download/v0.1.0-alpha.5/KnowledgeWorkbench-0.1.0-alpha.5-mac-arm64.dmg) 将完整应用拖入「应用程序」，也可从源码构建。Mac 使用 Command 快捷键，关闭窗口后可从 Dock 重开，退出使用 ⌘Q；截图需要屏幕录制权限。当前预览构建未做 Apple 公证，详见 [Mac 适配说明](docs/macos.md)。
+Apple Silicon Mac 的 [0.1.0-alpha.6 DMG](https://github.com/Zeen-F/knowledge-workbench/releases/download/v0.1.0-alpha.6/KnowledgeWorkbench-0.1.0-alpha.6-mac-arm64.dmg) 将完整应用拖入「应用程序」，也可从源码构建。Mac 使用 Command 快捷键，关闭窗口后可从 Dock 重开，退出使用 ⌘Q；截图需要屏幕录制权限。当前预览构建未做 Apple 公证，详见 [Mac 适配说明](docs/macos.md)。
 
 ## 写作与材料审核
 
@@ -103,3 +103,13 @@ macOS 将 `npm.cmd` 换为 `npm`，先 `npm run build` 再 `npm start`；目录�
 [需求](docs/requirements.md) · [架构与数据](docs/architecture.md) · [实施记录](docs/implementation.md) · [反馈问题](https://github.com/Zeen-F/knowledge-workbench/issues)
 
 作者联系方式：**微信 a1152017529 · QQ 1152017529**。
+
+## 学习任务收集、恢复与快捷键
+
+每次进入收集箱先选择本次学习任务：新建命名任务、继续已有任务，或进入“未分类 / 历史收集”。截图、导入/粘贴图片和文字想法归入当前任务；结束后可继续，重新进入不自动沿用上次任务。切换或离开时，未保存想法需保存或保留本机恢复草稿。旧材料与原 Markdown、附件位置保持不变。
+
+卡片支持单条删除，也可删除所选材料。确认框列出范围（含被筛选隐藏的选择）；只把记录移入“已删除”，可撤销或以后恢复。原 Markdown、共享图片、已有笔记及整理批次均保留，不提供永久删除。
+
+桌面设置中的“框选截图快捷键”可录入、保存和恢复默认。原默认为 Command/Ctrl+Alt+S；占用或保存失败保留上个有效键。录入期间本应用不触发截图，无当前任务时全局快捷键先打开任务选择。浏览器/插件面板不会更改桌面全局快捷键。
+
+普通桌面入口读取当前 profile 的 `appearance.json`（`{"visual":"shanlan"}`），恢复既有山岚 V2，同时保留原库和范围。升级不自动迁移资料或扩展插件权限。

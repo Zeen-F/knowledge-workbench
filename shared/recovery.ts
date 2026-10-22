@@ -2,13 +2,16 @@ import { z } from "zod";
 import { hashSchema } from "./contracts";
 
 export const recoveryIdentitySchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("inbox"), id: z.literal("") }),
+  z.object({
+    kind: z.literal("inbox"),
+    id: z.union([z.literal(""), z.string().uuid()]),
+  }),
   z.object({ kind: z.literal("review"), id: z.string().uuid() }),
 ]);
 export const recoveryRecordSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("inbox"),
-    id: z.literal(""),
+    id: z.union([z.literal(""), z.string().uuid()]),
     value: z.object({
       title: z.string().max(200),
       thought: z.string().max(500000),
@@ -28,6 +31,7 @@ export const SERVICE_FEATURES = {
   reliability: 1,
   recovery: 1,
   researchProfiles: 1,
+  collectionTasks: 1,
 } as const;
 export function requirePanelFeatures(status: {
   features?: Record<string, number>;

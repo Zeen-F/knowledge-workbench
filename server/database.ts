@@ -10,6 +10,8 @@ export function openDatabase(dir: string) {
     CREATE INDEX IF NOT EXISTS notes_id ON notes(id);
     CREATE TABLE IF NOT EXISTS assets(hash TEXT PRIMARY KEY,path TEXT NOT NULL,mime TEXT NOT NULL,size INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS sources(id TEXT PRIMARY KEY,path TEXT NOT NULL,ref TEXT NOT NULL,text TEXT NOT NULL,transfer_id TEXT UNIQUE);
+    CREATE TABLE IF NOT EXISTS collection_tasks(id TEXT PRIMARY KEY,name TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,ended INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE IF NOT EXISTS capture_trash(source_id TEXT PRIMARY KEY,deleted_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS relations(from_path TEXT NOT NULL,to_ref TEXT NOT NULL,kind TEXT NOT NULL,PRIMARY KEY(from_path,to_ref,kind));
     CREATE TABLE IF NOT EXISTS extractions(path TEXT PRIMARY KEY,source_id TEXT NOT NULL,source_hash TEXT NOT NULL,body TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,state TEXT NOT NULL,executor TEXT NOT NULL,created_at TEXT NOT NULL,error TEXT,snapshot TEXT NOT NULL);
