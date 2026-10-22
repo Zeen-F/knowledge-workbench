@@ -245,6 +245,35 @@ try {
   await page
     .getByRole("textbox", { name: "快速记录想法", exact: true })
     .fill("A retained draft");
+  const noteScope = page.getByRole("combobox", {
+    name: "笔记范围",
+    exact: true,
+  });
+  await expect(noteScope).toHaveValue("workbench");
+  await noteScope.selectOption("vault");
+  await page.getByRole("button", { name: "留在当前任务", exact: true }).click();
+  await expect(noteScope).toHaveValue("workbench");
+  await expect(
+    page.getByRole("textbox", { name: "快速记录想法", exact: true }),
+  ).toHaveValue("A retained draft");
+  await expect(
+    page.getByRole("button", { name: "切换任务", exact: true }),
+  ).toBeVisible();
+  await noteScope.selectOption("vault");
+  await page
+    .getByRole("button", { name: "保留草稿并离开", exact: true })
+    .click();
+  await expect(noteScope).toHaveValue("vault");
+  await expect(
+    page.getByRole("textbox", { name: "快速记录想法", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: /^收集箱/ }).click();
+  await page
+    .getByRole("button", { name: "继续任务 Study A", exact: true })
+    .click();
+  await expect(
+    page.getByRole("textbox", { name: "快速记录想法", exact: true }),
+  ).toHaveValue("A retained draft");
   await page.getByRole("button", { name: "切换任务", exact: true }).click();
   await page
     .getByRole("button", { name: "保留草稿并离开", exact: true })

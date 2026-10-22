@@ -135,10 +135,11 @@ export default function App() {
   const [collectionEntry, setCollectionEntry] = useState(0);
   const inboxLeave = useRef<(() => Promise<boolean>) | null>(null);
   async function navigate(next: View) {
-    if (inboxLeave.current && !(await inboxLeave.current())) return;
+    if (inboxLeave.current && !(await inboxLeave.current())) return false;
     openGeneration.current++;
     if (next === "inbox") setCollectionEntry((n) => n + 1);
     setView(next);
+    return true;
   }
   useEffect(
     () =>
@@ -734,8 +735,8 @@ export default function App() {
               onChange={(event) => {
                 const next = event.target.value as "workbench" | "vault";
                 void flushAll()
-                  .then(() => {
-                    navigate("all");
+                  .then(async () => {
+                    if (!(await navigate("all"))) return;
                     setActive("");
                     setQuery("");
                     setResults(null);
@@ -789,9 +790,8 @@ export default function App() {
             <button
               key={s.key}
               className={view === s.key ? "active" : ""}
-              onClick={() => {
-                navigate(s.key as View);
-                setQuery("");
+              onClick={async () => {
+                if (await navigate(s.key as View)) setQuery("");
               }}
             >
               <s.icon size={17} />
