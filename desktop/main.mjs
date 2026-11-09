@@ -52,9 +52,8 @@ const profileDir = path.resolve(
 );
 fs.mkdirSync(profileDir, { recursive: true });
 app.setPath("userData", profileDir);
-app.setName(
-  desktopPreview ? "Knowledge Workbench Shanlan V2" : "Knowledge Workbench",
-);
+const appName = process.platform === "darwin" ? "知识工作台" : "Knowledge Workbench";
+app.setName(desktopPreview ? `${appName} Shanlan V2` : appName);
 const shanlanAppearance = dailyShanlan || desktopPreview || readAppearance(profileDir);
 const rendererUrl = (baseUrl) =>
   shanlanAppearance ? `${baseUrl}/?visual=shanlan` : baseUrl;

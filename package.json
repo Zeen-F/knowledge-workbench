@@ -70,7 +70,16 @@
       "allowToChangeInstallationDirectory": true,
       "deleteAppDataOnUninstall": false
     },
+    "dmg": {
+      "title": "知识工作台 ${version}"
+    },
     "mac": {
+      "executableName": "知识工作台",
+      "icon": "packaging/macos-icon.png",
+      "extendInfo": {
+        "CFBundleDisplayName": "知识工作台",
+        "CFBundleExecutable": "Knowledge Workbench"
+      },
       "target": [
         "dmg",
         "zip"

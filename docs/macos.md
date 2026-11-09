@@ -11,7 +11,7 @@ npm run desktop:pack:mac
 npm run desktop:dist:mac
 ```
 
-默认按当前 Mac 架构构建：Apple Silicon 输出到 `release/mac-arm64/Knowledge Workbench.app`，Intel 输出到 `release/mac/Knowledge Workbench.app`。安装包在 `release/`，文件名包含架构。要构建另一架构可追加 `-- --x64` 或 `-- --arm64`；能产出安装包不等于在该硬件上实际通过验收。
+默认按当前 Mac 架构构建：Apple Silicon 输出到 `release/mac-arm64/知识工作台.app`，Intel 输出到 `release/mac/知识工作台.app`。应用图标取自 `packaging/macos-icon.png`。包内主程序沿用 `Contents/MacOS/Knowledge Workbench`，供已有插件配置启动。安装包在 `release/`，文件名包含架构。要构建另一架构可追加 `-- --x64` 或 `-- --arm64`；能产出安装包不等于在该硬件上实际通过验收。
 
 将整个 `.app` 放入 Applications 或 `~/Applications`，再打开；不要单独复制内部可执行文件。当前使用本地 ad-hoc 签名，未配置 Developer ID 或 Apple 公证。下载后的系统验证与本地构建启动分别验收。
 
@@ -50,7 +50,7 @@ npm run test:codex-host
 npm run test:ui
 KWB_TEST_BROWSER=chrome npm run test:panel
 KWB_TEST_BROWSER=chrome npm run test:reliability-ui
-KWB_TEST_EXE="$PWD/release/mac-arm64/Knowledge Workbench.app/Contents/MacOS/Knowledge Workbench" npm run test:ui
+KWB_TEST_EXE="$PWD/release/mac-arm64/知识工作台.app/Contents/MacOS/Knowledge Workbench" npm run test:ui
 ```
 
 浏览器协议测试也可不设置 `KWB_TEST_BROWSER`，在 `npx playwright install chromium` 后使用 Playwright Chromium。桌面测试使用带中文及空格路径的系统临时库，验证 Mac 原生菜单、Command 编辑、关闭保留服务、Dock 重开、退出清理，以及桌面生成的插件配置经实际 Electron stdio 连接；全部测试在结束后清理自身临时库。
