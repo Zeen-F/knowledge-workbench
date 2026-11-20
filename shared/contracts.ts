@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ResearchProfileSnapshot } from "./research-profiles.ts";
+import { codexOptionsSchema, type CodexOptions } from "./codex-options.ts";
 
 export const PRODUCT = "knowledge-workbench";
 export const API_VERSION = 1;
@@ -37,6 +38,12 @@ export const rectSchema = z
     (r) => r.x + r.width <= 1.001 && r.y + r.height <= 1.001,
     "选区超出页面",
   );
+export const deletedNoteSchema = z.object({
+  id: z.string().uuid(),
+  path: relativePathSchema,
+  hash: hashSchema,
+});
+export type DeletedNote = z.infer<typeof deletedNoteSchema>;
 export const paperdeskRefSchema = z.object({
   documentId: z.string().uuid(),
   title: z.string().max(1000),
@@ -81,6 +88,19 @@ export type Note = NoteSummary & {
   body?: string;
   draft?: { content: string; baseHash: string; savedAt: string };
 };
+export const childNoteParentSchema = z.object({
+  path: relativePathSchema,
+  expectedHash: hashSchema,
+  offset: z.number().int().nonnegative(),
+  placement: z.enum(["inline", "block"]).optional(),
+  requestId: z.string().uuid(),
+});
+export type ChildNoteParent = z.infer<typeof childNoteParentSchema>;
+export type ChildNoteResult = {
+  child: Note;
+  parent: Note;
+  insertion?: { offset: number; text: string };
+};
 export type CollectionTask = {
   id: string;
   name: string;
@@ -96,22 +116,124 @@ export type Capture = {
   text: string;
   version?: string;
 };
+export const batchExecutorSchema = z.enum(["codex-cli", "api", "codex"]);
+export type BatchExecutor = z.infer<typeof batchExecutorSchema>;
+export const MAX_OPTIMIZATION_REFERENCES = 10;
+export const noteOptimizationInputSchema = z.object({
+  path: relativePathSchema,
+  scope: z.enum(["workbench", "vault"]),
+  referencePaths: z.array(relativePathSchema).max(MAX_OPTIMIZATION_REFERENCES),
+  instruction: z.string().max(2000),
+  codexOptions: codexOptionsSchema.optional(),
+});
+export type NoteOptimizationInput = z.infer<typeof noteOptimizationInputSchema>;
+export type CodexCliStatus = "ready" | "missing" | "signed-out" | "unavailable";
+export type NoteReference = {
+  path: string;
+  hash: string;
+  title: string;
+  content: string;
+};
+export type NoteAnnotation = {
+  line: number;
+  text: string;
+  nearbyImage?: number;
+};
+export type NoteImage = {
+  path: string;
+  line: number;
+  hash: string;
+  mime: string;
+};
+export type NoteImageIssue = {
+  line: number;
+  detail: string;
+};
+export const codexReviewAnchorSchema = z.object({
+  text: z.string().trim().min(1).max(6000),
+  offset: z.number().int().nonnegative().max(500000),
+  line: z.number().int().positive().max(500001),
+  column: z.number().int().positive().max(500001).optional(),
+});
+export type CodexReviewAnchor = z.infer<typeof codexReviewAnchorSchema>;
+export const codexRevisionCommentSchema = z.object({
+  text: z.string().trim().min(1).max(10000),
+  anchor: codexReviewAnchorSchema.optional(),
+});
+export type CodexRevisionComment = z.infer<typeof codexRevisionCommentSchema>;
+export const maxRevisionComments = 50;
+export const codexReviewInputSchema = z
+  .object({
+    mode: z.enum(["chat", "revision"]),
+    quote: z.string().trim().max(6000).optional(),
+    comments: z
+      .array(codexRevisionCommentSchema)
+      .min(1)
+      .max(maxRevisionComments)
+      .optional(),
+    codexOptions: codexOptionsSchema.optional(),
+  })
+  .refine((review) => !review.comments || review.mode === "revision");
+export type CodexReviewInput = z.infer<typeof codexReviewInputSchema>;
 export type BatchSnapshot = {
   schema: "batch-snapshot/v1";
   taskId?: string;
   id: string;
   createdAt: string;
-  executor: "api" | "codex";
+  executor: BatchExecutor;
+  codexOptions?: CodexOptions;
   instruction: string;
   sources: Capture[];
-  references: { path: string; hash: string; title: string; content: string }[];
+  references: NoteReference[];
+  noteRevision?: NoteReference & {
+    noteType: "concept" | "learning-log";
+    annotations?: NoteAnnotation[];
+    images?: NoteImage[];
+    imageIssues?: NoteImageIssue[];
+  };
   researchProfile?: ResearchProfileSnapshot;
+  codexFollowUp?: {
+    rootJobId: string;
+    proposalId: string;
+    draftHash: string;
+    base: DraftProposal;
+    mode?: CodexReviewInput["mode"];
+    quote?: string;
+    comments?: CodexRevisionComment[];
+  };
   inputHash: string;
 };
 export type BatchPreview = Omit<
   BatchSnapshot,
   "schema" | "id" | "createdAt" | "inputHash"
 > & { previewHash: string };
+const annotationResponsesSchema = z
+  .array(
+    z.object({
+      line: z.number().int().positive(),
+      state: z.enum(["answered", "needs-context"]),
+      response: z.string().trim().min(1).max(6000),
+    }),
+  )
+  .max(80);
+export const childNoteDraftSchema = z.object({
+  key: z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/),
+  title: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .refine((value) => !/[\r\n]/.test(value)),
+  markdown: z.string().min(1).max(160000),
+});
+export type ChildNoteDraft = z.infer<typeof childNoteDraftSchema>;
+const childNotesSchema = z.array(childNoteDraftSchema).max(20).optional();
+export const noteRevisionResultSchema = z.object({
+  markdown: z.string().min(1).max(500000),
+  unresolved: z.array(z.string().max(2000)).max(50).default([]),
+  annotationResponses: annotationResponsesSchema.optional(),
+  childNotes: childNotesSchema,
+});
 export const draftProposalSchema = z
   .object({
     title: z.string().min(1).max(200),
@@ -119,14 +241,26 @@ export const draftProposalSchema = z
     targetPath: relativePathSchema.optional(),
     baseHash: hashSchema.optional(),
     noteType: z.enum(["concept", "learning-log"]).default("concept"),
-    markdown: z.string().min(1).max(500000),
+    markdown: noteRevisionResultSchema.shape.markdown,
     sourceIds: z.array(z.string().uuid()).min(1),
-    unresolved: z.array(z.string().max(2000)).max(50).default([]),
+    unresolved: noteRevisionResultSchema.shape.unresolved,
+    childNotes: childNotesSchema,
   })
   .refine(
     (p) => p.action !== "amend" || Boolean(p.targetPath && p.baseHash),
     "修改必须携带目标笔记和原版本",
   );
+export const noteRevisionDraftSchema = draftProposalSchema.safeExtend({
+  action: z.literal("amend"),
+  targetPath: relativePathSchema,
+  baseHash: hashSchema,
+  sourceIds: z.array(z.string().uuid()).length(0),
+  annotationResponses: annotationResponsesSchema.optional(),
+});
+export const storedProposalSchema = z.union([
+  draftProposalSchema,
+  noteRevisionDraftSchema,
+]);
 export type DraftProposal = z.infer<typeof draftProposalSchema>;
 export type Proposal = DraftProposal & {
   id: string;
@@ -137,13 +271,18 @@ export type Proposal = DraftProposal & {
   draftHash: string;
   recovery?: string;
   unavailable?: string;
+  supersededBy?: string;
+  revising?: boolean;
+  legacyChildren?: boolean;
+  annotationResponses?: z.infer<typeof annotationResponsesSchema>;
 };
 export type Job = {
   id: string;
   state: string;
-  executor: string;
+  executor: BatchExecutor;
   createdAt: string;
   error: string | null;
+  codexThreadId?: string;
   snapshot: BatchSnapshot;
   items: {
     sourceId: string;
@@ -152,6 +291,30 @@ export type Job = {
     error: string | null;
   }[];
 };
+
+export type CodexConversation = {
+  rootJobId: string;
+  threadId?: string;
+  title: string;
+  turns: {
+    jobId: string;
+    at: string;
+    instruction: string;
+    state: string;
+    error: string | null;
+    followUp: boolean;
+    mode?: CodexReviewInput["mode"];
+    quote?: string;
+    comments?: CodexRevisionComment[];
+    baseId?: string;
+    codexOptions?: CodexOptions;
+    answer?: string;
+    replies: { id: string; title: string; markdown: string }[];
+  }[];
+};
+export function codexRootJob(job: Pick<Job, "id" | "snapshot">) {
+  return job.snapshot.codexFollowUp?.rootJobId || job.id;
+}
 export const providerSchema = z.object({
   baseUrl: z.string().url(),
   protocol: z.enum(["responses", "chat-completions"]),
@@ -180,6 +343,17 @@ export interface DesktopBridge {
   chooseVault(): Promise<void>;
   capture(taskId?: string): Promise<void>;
   invoke(method: string, route: string, body?: unknown): Promise<any>;
+  invokeResult?(
+    method: string,
+    route: string,
+    body?: unknown,
+  ): Promise<{
+    data?: unknown;
+    error?: string;
+    code?: string;
+    status?: number;
+    details?: unknown;
+  }>;
   openExternal(url: string): Promise<void>;
   onFlush(callback: () => Promise<void>): () => void;
   onCapture(callback: () => void): () => void;

@@ -28,7 +28,7 @@ jobs:
         timeout-minutes: 3
       - uses: actions/checkout@v4
         with:
-          repository: Zeen-F/PDF_Vibecoding
+          repository: Zeen-F/XiReader
           ref: 939b6ff3010e0145594573ee4673578bb375e7be
           path: .local/paperdesk-integration
           persist-credentials: false

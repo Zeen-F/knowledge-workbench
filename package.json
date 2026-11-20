@@ -1,6 +1,6 @@
 {
   "name": "knowledge-workbench",
-  "version": "0.1.0-alpha.6",
+  "version": "0.1.0-alpha.7",
   "description": "Windows 与 macOS 模拟 IC 学习、写作与知识整理工作台",
   "private": true,
   "type": "module",
@@ -70,7 +70,16 @@
       "allowToChangeInstallationDirectory": true,
       "deleteAppDataOnUninstall": false
     },
+    "dmg": {
+      "title": "知识工作台 ${version}"
+    },
     "mac": {
+      "executableName": "知识工作台",
+      "icon": "packaging/macos-icon.png",
+      "extendInfo": {
+        "CFBundleDisplayName": "知识工作台",
+        "CFBundleExecutable": "Knowledge Workbench"
+      },
       "target": [
         "dmg",
         "zip"
@@ -101,7 +110,7 @@
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "yaml": "2.9.1",
-    "zod": "4.6.5"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@playwright/test": "1.64.0",

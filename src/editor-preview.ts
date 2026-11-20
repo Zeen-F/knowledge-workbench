@@ -1,17 +1,95 @@
-import { EditorState, StateField, type Range } from "@codemirror/state";
+import {
+  EditorState,
+  StateEffect,
+  StateField,
+  type Range,
+} from "@codemirror/state";
+import { markdownLanguage } from "@codemirror/lang-markdown";
 import {
   Decoration,
   EditorView,
+  ViewPlugin,
   WidgetType,
   type DecorationSet,
 } from "@codemirror/view";
+import { localLinkTarget } from "../shared/note-links";
+import { noteOutline } from "../shared/note-outline";
 import { renderMarkdown, renderMath } from "./markdown";
+import { noteColorStyle } from "../shared/note-colors";
+import { noteInlineSpans } from "./note-color-editing";
+
+export const finishPreviewPointerSelection = StateEffect.define<null>();
+
+const previewPointerRelease = ViewPlugin.fromClass(
+  class {
+    private frame: number | undefined;
+
+    constructor(private readonly view: EditorView) {}
+
+    cancel() {
+      if (this.frame === undefined) return;
+      this.view.dom.ownerDocument.defaultView?.cancelAnimationFrame(this.frame);
+      this.frame = undefined;
+    }
+
+    finish() {
+      this.cancel();
+      // Wait until CodeMirror has processed the document's mouseup and the
+      // browser has delivered click handlers for rendered links and widgets.
+      this.frame =
+        this.view.dom.ownerDocument.defaultView?.requestAnimationFrame(() => {
+          this.frame = undefined;
+          this.view.dispatch({
+            effects: finishPreviewPointerSelection.of(null),
+          });
+        });
+    }
+
+    destroy() {
+      this.cancel();
+    }
+  },
+  {
+    eventObservers: {
+      mousedown() {
+        this.cancel();
+      },
+      mouseup(event) {
+        if (event.button === 0) this.finish();
+      },
+      touchstart() {
+        this.cancel();
+      },
+      touchend() {
+        this.finish();
+      },
+    },
+  },
+);
+
+export const locateNoteReference = StateEffect.define<number>();
+export const noteReferenceLine = StateField.define<number | null>({
+  create: () => null,
+  update(line, tr) {
+    const jump = tr.effects.find((effect) => effect.is(locateNoteReference));
+    if (jump) return tr.state.doc.lineAt(jump.value).from;
+    return tr.docChanged || tr.selection ? null : line;
+  },
+  provide: (field) =>
+    EditorView.decorations.from(field, (line) =>
+      line === null
+        ? Decoration.none
+        : Decoration.set([
+            Decoration.line({ class: "cm-child-reference" }).range(line),
+          ]),
+    ),
+});
 
 class Rendered extends WidgetType {
   constructor(
     readonly html: string,
     readonly sourceStart: number,
-    readonly block = false,
+    readonly layout: "inline" | "block" | "image" = "inline",
   ) {
     super();
   }
@@ -19,13 +97,18 @@ class Rendered extends WidgetType {
     return (
       other.html === this.html &&
       other.sourceStart === this.sourceStart &&
-      other.block === this.block
+      other.layout === this.layout
     );
   }
   toDOM(view: EditorView) {
-    const node = document.createElement(this.block ? "div" : "span");
-    node.className = this.block ? "md-rendered" : "md-inline";
-    node.innerHTML = this.block
+    const block = this.layout === "block";
+    const node = view.dom.ownerDocument.createElement(block ? "div" : "span");
+    node.className = block
+      ? "md-rendered"
+      : this.layout === "image"
+        ? "md-rendered md-image"
+        : "md-inline";
+    node.innerHTML = block
       ? this.html
       : this.html.replace(/^<p>/, "").replace(/<\/p>\s*$/, "");
     node.addEventListener("dblclick", (event) => {
@@ -62,7 +145,14 @@ function selectionSpans(
   state: EditorState,
 ): CandidateSpan[] {
   const spans: CandidateSpan[] = [];
+  const located = state.field(noteReferenceLine, false);
   for (const selection of state.selection.ranges) {
+    if (
+      located != null &&
+      selection.empty &&
+      state.doc.lineAt(selection.head).from === located
+    )
+      continue;
     let low = 0,
       high = candidates.length;
     while (low < high) {
@@ -155,7 +245,7 @@ export function previewField(
         to,
         ranges: [
           Decoration.replace({
-            widget: new Rendered(html, from, true),
+            widget: new Rendered(html, from, "block"),
             block: true,
           }).range(from, to),
         ],
@@ -175,14 +265,60 @@ export function previewField(
         to = from + match[0].length;
       if (!taken(from, to)) block(from, to, renderers.markdown(match[0], file));
     }
-    for (const match of content.matchAll(/^\$\$\s*\n([\s\S]*?)\n\$\$\s*$/gm)) {
+    for (const match of content.matchAll(
+      /^[ \t]*(\$\$|\\\[)[ \t]*\n([\s\S]*?)\n[ \t]*(\$\$|\\\])[ \t]*$/gm,
+    )) {
       const from = match.index!,
         to = from + match[0].length;
-      if (!taken(from, to)) block(from, to, renderers.math(match[1], true));
+      if ((match[1] === "$$") === (match[3] === "$$") && !taken(from, to))
+        block(from, to, renderers.math(match[2], true));
     }
+    const outline = content.includes("[TOC]")
+      ? noteOutline(content).filter((heading) => heading.level > 1)
+      : [];
+    const formattedText = noteInlineSpans(content);
+    let formatIndex = 0;
     for (let i = 1; i <= state.doc.lines; i++) {
       const line = state.doc.line(i);
       if (taken(line.from, line.to)) continue;
+      const displayMath = line.text.match(
+        /^\s*(?:\$\$(.+?)\$\$|\\\[(.+?)\\\])\s*$/,
+      );
+      if (displayMath) {
+        block(
+          line.from,
+          line.to,
+          renderers.math(displayMath[1] || displayMath[2], true),
+        );
+        continue;
+      }
+      if (line.text.trim() === "[TOC]" && outline.length) {
+        const entries = outline.map(({ title, level, offset }) => {
+          const safe = title
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;");
+          return (
+            '<li style="padding-inline-start:' +
+            (level - 2) * 13 +
+            'px"><a href="#heading-' +
+            offset +
+            '" data-note-heading="' +
+            offset +
+            '">' +
+            safe +
+            "</a></li>"
+          );
+        });
+        block(
+          line.from,
+          line.to,
+          '<nav class="note-toc" aria-label="笔记目录"><strong>目录</strong><ol>' +
+            entries.join("") +
+            "</ol></nav>",
+        );
+        continue;
+      }
       if (
         i < state.doc.lines &&
         line.text.includes("|") &&
@@ -208,10 +344,82 @@ export function previewField(
         /^\s*!\[.*\]\(.*\)\s*$/.test(line.text) ||
         /^\s*!\[\[.+\]\]\s*$/.test(line.text)
       ) {
-        block(line.from, line.to, renderers.markdown(line.text, file));
+        // Keep the CodeMirror line around the image. A block replacement
+        // adjacent to an empty line can split Chromium's IME composition.
+        const widget = new Rendered(
+          renderers.markdown(line.text, file),
+          line.from,
+          "image",
+        );
+        candidates.push({
+          from: line.from,
+          to: line.to,
+          ranges: [Decoration.replace({ widget }).range(line.from, line.to)],
+        });
         continue;
       }
       const inline: Range<Decoration>[] = [];
+      while (
+        formatIndex < formattedText.length &&
+        formattedText[formatIndex].open.from < line.from
+      )
+        formatIndex++;
+      while (
+        formatIndex < formattedText.length &&
+        formattedText[formatIndex].close.to <= line.to
+      ) {
+        const { open, close } = formattedText[formatIndex++];
+        const { color, element } = open;
+        if (open.to < close.from) {
+          ranges.push(
+            Decoration.mark({
+              tagName: element,
+              ...(color
+                ? {
+                    class: "note-inline-color",
+                    attributes: { style: noteColorStyle(color) },
+                  }
+                : {}),
+            }).range(open.to, close.from),
+          );
+        }
+        inline.push(Decoration.replace({}).range(open.from, open.to));
+        inline.push(Decoration.replace({}).range(close.from, close.to));
+      }
+      const noteLinks: { from: number; to: number }[] = [];
+      if (line.text.includes("]("))
+        markdownLanguage.parser.parse(line.text).iterate({
+          enter(node) {
+            if (node.name !== "Link") return;
+            const url = node.node.getChild("URL");
+            if (!url) return false;
+            const target = line.text
+              .slice(url.from, url.to)
+              .replace(/^<|>$/g, "");
+            if (
+              !/^child-note:[a-z0-9][a-z0-9-]{0,39}$/.test(target) &&
+              (!/\.md(?:#.*)?$/i.test(target) ||
+                !localLinkTarget(target, file, "markdown"))
+            )
+              return false;
+            const from = line.from + node.from;
+            const to = line.from + node.to;
+            const html = renderers.markdown(
+              line.text.slice(node.from, node.to),
+              file,
+            );
+            noteLinks.push({ from, to });
+            inline.push(
+              Decoration.replace({ widget: new Rendered(html, from) }).range(
+                from,
+                to,
+              ),
+            );
+            return false;
+          },
+        });
+      const overlapsLink = (from: number, to: number) =>
+        noteLinks.some((link) => link.from < to && from < link.to);
       const heading = line.text.match(/^(#{1,6})\s+/);
       if (heading) {
         ranges.push(
@@ -228,16 +436,20 @@ export function previewField(
       }
       if (/^>\s/.test(line.text))
         ranges.push(Decoration.line({ class: "cm-quote" }).range(line.from));
-      for (const m of line.text.matchAll(/(?<!\$)\$([^$\n]+)\$(?!\$)/g)) {
+      for (const m of line.text.matchAll(
+        /(?<!\$)\$([^$\n]+)\$(?!\$)|\\\((.+?)\\\)/g,
+      )) {
         const from = line.from + m.index!;
+        if (overlapsLink(from, from + m[0].length)) continue;
         inline.push(
           Decoration.replace({
-            widget: new Rendered(renderers.math(m[1], false), from),
+            widget: new Rendered(renderers.math(m[1] || m[2], false), from),
           }).range(from, from + m[0].length),
         );
       }
       for (const m of line.text.matchAll(/\*\*([^*]+)\*\*/g)) {
         const from = line.from + m.index!;
+        if (overlapsLink(from, from + m[0].length)) continue;
         inline.push(
           Decoration.replace({}).range(from, from + 2),
           Decoration.mark({ class: "cm-strong" }).range(
@@ -252,6 +464,7 @@ export function previewField(
       }
       for (const m of line.text.matchAll(/(?<!!)\[\[([^\]]+)\]\]/g)) {
         const from = line.from + m.index!;
+        if (overlapsLink(from, from + m[0].length)) continue;
         inline.push(
           Decoration.replace({
             widget: new Rendered(renderers.markdown(m[0], file), from),
@@ -277,12 +490,25 @@ export function previewField(
       // Reparse after edits so block boundaries, widget offsets and mapped
       // selections always refer to the new document, never stale coordinates.
       if (tr.docChanged) return create(tr.state);
-      if (!tr.selection || tr.startState.selection.eq(tr.state.selection))
+      // Coordinate hit testing must see the same line layout from the press
+      // through the last drag event. A range stays in preview after release.
+      if (tr.isUserEvent("select.pointer")) return value;
+      if (tr.effects.some((effect) => effect.is(finishPreviewPointerSelection)))
+        return tr.state.selection.ranges.every((range) => range.empty)
+          ? revealSelection(value, tr.state)
+          : value;
+      if (
+        tr.startState.selection.eq(tr.state.selection) &&
+        tr.startState.field(noteReferenceLine, false) ===
+          tr.state.field(noteReferenceLine, false)
+      )
         return value;
       return revealSelection(value, tr.state);
     },
     // Block replacements affect vertical layout and must be directly provided.
-    provide: (field) =>
+    provide: (field) => [
       EditorView.decorations.from(field, (value) => value.decorations),
+      previewPointerRelease,
+    ],
   });
 }

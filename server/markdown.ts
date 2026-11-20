@@ -1,11 +1,16 @@
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
-import { markdownLinks } from "./markdown-links.ts";
+import { AppError } from "./files.ts";
+import { markdownLinks } from "../shared/markdown-links.ts";
 import { createNoteResolver, localLinkTarget } from "../shared/note-links.ts";
-export { markdownLinks } from "./markdown-links.ts";
+import { uncoloredHeading } from "../shared/note-outline.ts";
+export { markdownLinks } from "../shared/markdown-links.ts";
+
+const frontmatterPattern = /^\uFEFF?---\r?\n([\s\S]*?)(?<=\n)---(?:\r?\n|$)/;
 
 export function parseMarkdown(content: string, strict = true) {
-  const match = content.match(/^\uFEFF?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  const match = content.match(frontmatterPattern);
   let metadata: Record<string, unknown> = {};
   if (match) {
     let value: unknown;
@@ -44,11 +49,77 @@ export function noteTitle(
   metadata: Record<string, unknown>,
   relative: string,
 ) {
+  const heading = content.match(/^#\s+(.+)$/m)?.[1];
   return String(
     metadata.title ||
-      content.match(/^#\s+(.+)$/m)?.[1] ||
+      (heading && uncoloredHeading(heading)) ||
       path.posix.basename(relative, ".md"),
   );
+}
+
+export function withNoteTitle(content: string, title: string) {
+  let previous: ReturnType<typeof parseMarkdown>;
+  try {
+    previous = parseMarkdown(content);
+  } catch {
+    throw new AppError("请先修复笔记的 YAML 属性，再修改标题。", 409);
+  }
+  const lineBreak = content.match(/\r?\n/)?.[0] || "\n";
+  const value = JSON.stringify(title);
+  const property = `title: ${value}${lineBreak}`;
+  const match = previous.frontmatter.match(frontmatterPattern);
+  if (!match) {
+    const bom = content.startsWith("\uFEFF") ? "\uFEFF" : "";
+    return `${bom}---${lineBreak}${property}---${lineBreak}${content.slice(bom.length)}`;
+  }
+
+  // Patch the YAML source by node range so comments, custom properties, line
+  // endings and Markdown heading anchors remain intact.
+  const yaml = match[1];
+  const doc = YAML.parseDocument(yaml);
+  const node = doc.get("title", true);
+  const range = YAML.isNode(node) ? node.range : undefined;
+  let nextYaml: string;
+  if (range) {
+    const [start, end] = range;
+    const before = yaml.slice(0, start);
+    const after = yaml.slice(end);
+    const separator = before.endsWith(":") ? " " : "";
+    const suffix = yaml.slice(start, end).endsWith("\n")
+      ? lineBreak
+      : after.startsWith("#")
+        ? " "
+        : "";
+    nextYaml = before + separator + value + suffix + after;
+  } else if (YAML.isMap(doc.contents) && doc.contents.range) {
+    const [start] = doc.contents.range;
+    if (doc.contents.flow) {
+      const separator = doc.contents.items.length ? ", " : "";
+      nextYaml =
+        yaml.slice(0, start + 1) +
+        `title: ${value}${separator}` +
+        yaml.slice(start + 1);
+    } else {
+      const lineStart = yaml.lastIndexOf("\n", start - 1) + 1;
+      nextYaml = yaml.slice(0, start) + property + yaml.slice(lineStart);
+    }
+  } else {
+    const empty = doc.contents?.range;
+    nextYaml = empty
+      ? yaml.slice(0, empty[0]) + `title: ${value}` + yaml.slice(empty[1])
+      : yaml + property;
+  }
+  const yamlStart = match[0].indexOf("\n") + 1;
+  const changed =
+    content.slice(0, yamlStart) +
+    nextYaml +
+    content.slice(yamlStart + yaml.length);
+  const { metadata, error } = parseMarkdown(changed, false);
+  const { title: oldTitle, ...others } = previous.metadata;
+  const { title: newTitle, ...nextOthers } = metadata;
+  if (error || newTitle !== title || !isDeepStrictEqual(others, nextOthers))
+    throw new AppError("标题属性与其他 YAML 内容关联，请在源码中修改。", 409);
+  return changed;
 }
 export function links(content: string, current?: string) {
   return markdownLinks(content).flatMap((link) => {

@@ -1,18 +1,18 @@
 # 知识工作台 · Knowledge Workbench
 
-面向模拟 IC 学习与科研写作的 Windows / macOS 主编辑器：随时记下想法和截图，把阅读材料整理成有来源、可修订的知识。Markdown 与附件保存在用户选择的 Obsidian 仓库；[纸间 Paperdesk](https://github.com/Zeen-F/PDF_Vibecoding) 负责 PDF 阅读和批注，知识工作台负责收集、写作与 AI 草稿审核。
+面向模拟 IC 学习与科研写作的 Windows / macOS 主编辑器：随时记下想法和截图，把阅读材料整理成有来源、可修订的知识。Markdown 与附件保存在用户选择的 Obsidian 仓库；[XiReader](https://github.com/Zeen-F/XiReader) 负责 PDF 阅读和批注，知识工作台负责收集、写作与 AI 草稿审核。
 
 这是通过与 AI 对话、反复试用和修改完成的 **vibecoding（vibe coding）** 项目，目前仍处于早期预览。欢迎反馈问题和参与改进；AI 生成的草稿需要人工核对，保存草稿不代表科学结论已验证。
 
 ## 下载、启动与升级
 
-本次桌面预览版为 **0.1.0-alpha.6**，配套 Codex 插件为 **0.1.0-alpha.7**。在 [Release 页面](https://github.com/Zeen-F/knowledge-workbench/releases/tag/v0.1.0-alpha.6) 下载 `KnowledgeWorkbench-0.1.0-alpha.6-win-x64.exe`；可下载文件与校验值以页面实际提供的资产为准。材料审核改进和可选山岚 V2 不会自动进入旧安装包。
+本次桌面预览版为 **0.1.0-alpha.7**，配套 Codex 插件为 **0.1.0-alpha.8**。在 [Release 页面](https://github.com/Zeen-F/knowledge-workbench/releases/tag/v0.1.0-alpha.7) 下载 `KnowledgeWorkbench-0.1.0-alpha.7-win-x64.exe`；可下载文件与校验值以页面实际提供的资产为准。本版新增学习记录模板、笔记链接预览和 Codex 修订审核。
 
 运行安装器后从原桌面快捷方式打开工作台，首次选择包含 `.obsidian` 的知识库根目录。完整安装包包含运行时，日常使用无需另装 Node.js。知识库和笔记保留在原位置，不放进源码目录或临时打包目录。
 
 升级前保存并正常退出旧工作台，备份 Markdown 和附件，正常断开占用安装目录的旧插件连接。安装器发现占用会退出并保留编辑窗口，不强制结束进程。更新完整应用后继续使用指向正式安装目录的快捷方式，再准备并核对插件；不要只复制 EXE。当前没有自动更新。
 
-Apple Silicon Mac 的 [0.1.0-alpha.6 DMG](https://github.com/Zeen-F/knowledge-workbench/releases/download/v0.1.0-alpha.6/KnowledgeWorkbench-0.1.0-alpha.6-mac-arm64.dmg) 将完整应用拖入「应用程序」，也可从源码构建。Mac 使用 Command 快捷键，关闭窗口后可从 Dock 重开，退出使用 ⌘Q；截图需要屏幕录制权限。当前预览构建未做 Apple 公证，详见 [Mac 适配说明](docs/macos.md)。
+Apple Silicon Mac 的 [0.1.0-alpha.7 DMG](https://github.com/Zeen-F/knowledge-workbench/releases/download/v0.1.0-alpha.7/KnowledgeWorkbench-0.1.0-alpha.7-mac-arm64.dmg) 将完整应用拖入「应用程序」，也可从源码构建。Mac 使用 Command 快捷键，关闭窗口后可从 Dock 重开，退出使用 ⌘Q；截图需要屏幕录制权限。当前预览构建未做 Apple 公证，详见 [Mac 适配说明](docs/macos.md)。
 
 ## 写作与材料审核
 
@@ -44,12 +44,18 @@ Apple Silicon Mac 的 [0.1.0-alpha.6 DMG](https://github.com/Zeen-F/knowledge-wo
 1. **收集证据。** 在工作台记下想法或截图；也可在纸间手动选择词句、段落或图表区域，核对实际 PDF 页后“发送到知识库”。两款应用须连接同一个 Obsidian 库。
 2. **筛选并核对。** 在收集箱搜索和预览材料，选择顺序及参考笔记。纸间材料保留来源和原始页码，可回查原 PDF；缺失或改变的来源需要核对。
 3. **预览交付内容。** 选择“通用整理”或“模拟 IC 科研”。科研配置支持研究笔记、论文提炼和电路实验，区分原文、个人假设、AI 推断及未知项，保留单位与实验条件。未提供的条件不会自动补成典型值。
-4. **明确发送。** 核对所选文字、参考快照、图片和整理规则后，再共享给现有 Codex 会话或自己的模型 API。修改选择、顺序、内容或配置后必须重新预览。预览本身不调用模型。
+4. **明确发送。** 核对所选文字、参考快照、图片和整理规则后，通过本机 Codex CLI、模型 API，或共享给现有 Codex 会话。修改执行方式、选择、顺序、内容或配置后必须重新预览。预览本身不调用模型。
 5. **审核草稿。** 对照来源与参考快照编辑返回结果，检查公式、单位、适用条件和待验证项，再点击“确认并保存”。AI 草稿不会自动成为已验证的正式结论。
 
 科研配置随每个批次固定版本，后续偏好变化不改写旧批次。详见 [科研笔记配置](docs/research-profiles.md) 和 [纸间交换协议](docs/paperdesk-protocol.md)。划词／手动选段翻译在纸间完成，需要核对选区并确认发送；工作台不会自动把 PDF 整页交给模型翻译。
 
-## Codex 插件与可选模型 API
+新建学习记录时可预览十种模板。空白模板默认只插入笔记标题，其他模板按论文精读、电路设计、仿真实验等用途提供小节。
+
+已有笔记可右键选择「交给 Codex 优化」。工作台从当前知识空间推荐有链接、反链或共同标签的笔记，也可以搜索添加。确认预览后，本机 Codex CLI 根据目标正文和选定的参考正文生成修订稿。在「待审稿」核对修改差异并确认后，正文写回原笔记，原有属性和版本历史保留。
+
+## 本机 Codex CLI、模型 API 与 Codex 插件
+
+桌面端默认通过本机 Codex CLI 整理，沿用 `codex login` 的登录状态。在「设置」查看登录检查，在「收集箱 → 整理所选」预览后确认。找不到 CLI 时，可在启动工作台前用 `KWB_CODEX_CLI` 指定可执行文件的绝对路径。模型 API 可在执行方式里手动选作备用。
 
 打开桌面工作台，在设置中点击“准备本地插件”，执行界面显示的两条 Codex 命令，再在 **Codex 新对话**中启用“知识工作台”，说“打开知识工作台”。由当前桌面程序准备的插件使用对应安装目录内的运行时；升级后应重新准备并核对连接。独立插件模板 ZIP 不包含本机配置，不能替代桌面运行时。
 

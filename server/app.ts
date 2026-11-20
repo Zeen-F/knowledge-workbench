@@ -5,10 +5,19 @@ import { createServer } from "node:http";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import {
+  LEARNING_LOG_TEMPLATE_IDS,
+  learningLogBody,
+} from "../shared/learning-log-templates.ts";
+import {
   API_VERSION,
+  batchExecutorSchema,
+  childNoteParentSchema,
+  codexReviewInputSchema,
+  noteOptimizationInputSchema,
   PRODUCT,
   providerSchema,
   relativePathSchema,
+  deletedNoteSchema,
   hashSchema,
 } from "../shared/contracts.ts";
 import {
@@ -25,6 +34,11 @@ import { Captures } from "./capture.ts";
 import { Processing } from "./processing.ts";
 import { Paperdesk } from "./paperdesk.ts";
 import { callProvider, validateProvider } from "./provider.ts";
+import { callCodexCli, codexCliCatalog, codexCliStatus } from "./codex-cli.ts";
+import {
+  codexOptionsSchema,
+  type CodexOptions,
+} from "../shared/codex-options.ts";
 import { paperdeskBody } from "./markdown.ts";
 import { relatedNotes } from "./relations.ts";
 import { RecoveryStore } from "./recovery.ts";
@@ -58,6 +72,21 @@ export async function startService(options: ServiceOptions) {
       ? digest(fs.realpathSync(options.vaultDir))
       : null;
   const dataDir = path.join(options.dataDir, "vaults", vaultId || "unbound");
+  const codexDefaultsPath = path.join(
+    options.dataDir,
+    "codex-cli-defaults.json",
+  );
+  const readCodexDefaults = (): CodexOptions | undefined => {
+    if (!options.desktop) return;
+    try {
+      return codexOptionsSchema.parse(
+        JSON.parse(fs.readFileSync(codexDefaultsPath, "utf8")),
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+  };
   const db = options.vaultDir ? openDatabase(dataDir) : null;
   const vault =
     options.vaultDir && db ? new Vault(options.vaultDir, dataDir, db) : null;
@@ -82,7 +111,15 @@ export async function startService(options: ServiceOptions) {
     return { ...config, apiKey: await options.decrypt(config.secret) };
   };
   const processing =
-    vault && captures ? new Processing(vault, captures, getProvider) : null;
+    vault && captures
+      ? new Processing(
+          vault,
+          captures,
+          getProvider,
+          options.desktop ? callCodexCli : undefined,
+          readCodexDefaults,
+        )
+      : null;
   const recoveryIssues = vault?.recoverMoves() || [];
   if (vault) {
     vault.scan();
@@ -154,6 +191,8 @@ export async function startService(options: ServiceOptions) {
         captureTrash: true,
         chooseVault: Boolean(options.desktop),
         plugin: Boolean(options.desktop),
+        codexCli: Boolean(options.desktop),
+        noteOptimization: Boolean(options.desktop),
         secureCredentials:
           options.secureStorage !== false &&
           Boolean(options.encrypt && options.decrypt),
@@ -259,13 +298,55 @@ export async function startService(options: ServiceOptions) {
       .object({
         title: z.string().min(1).max(200),
         noteType: z.enum(["concept", "learning-log"]).default("concept"),
+        learningTemplate: z.enum(LEARNING_LOG_TEMPLATE_IDS).optional(),
+        parent: childNoteParentSchema.optional(),
       })
+      .refine(
+        (note) =>
+          note.noteType === "learning-log" ||
+          note.learningTemplate === undefined,
+        {
+          message: "请选择学习记录类型后再使用学习记录模板",
+        },
+      )
       .parse(req.body);
-    res.status(201).json(vault!.create(b.title, b.noteType));
+    const content =
+      b.learningTemplate === undefined
+        ? undefined
+        : learningLogBody(b.title, b.learningTemplate);
+    if (b.parent) {
+      res
+        .status(201)
+        .json(vault!.createChild(b.title, b.noteType, b.parent, content));
+      return;
+    }
+    res.status(201).json(vault!.create(b.title, b.noteType, content));
   });
   app.put("/api/note", async (req, res) => {
     const b = save.parse(req.body);
     res.json(await saveNote(b.path, b.content, b.expectedHash));
+  });
+  app.post("/api/note/title", (req, res) => {
+    const b = z
+      .object({
+        path: relativePathSchema,
+        title: z
+          .string()
+          .trim()
+          .min(1)
+          .max(200)
+          .regex(/^[^\r\n]+$/, "标题需要写在一行内"),
+        expectedHash: hashSchema,
+      })
+      .parse(req.body);
+    res.json(vault!.setTitle(b.path, b.title, b.expectedHash));
+  });
+  app.post("/api/note/trash", (req, res) => {
+    const b = route.extend({ expectedHash: hashSchema }).parse(req.body);
+    res.json(vault!.trashNote(b.path, b.expectedHash));
+  });
+  app.post("/api/note/restore", (req, res) => {
+    res.json(vault!.restoreDeletedNote(deletedNoteSchema.parse(req.body)));
   });
   app.put("/api/draft", (req, res) => {
     const b = save.parse(req.body);
@@ -403,7 +484,8 @@ export async function startService(options: ServiceOptions) {
     taskId: taskIdSchema.default("history"),
     sourceIds: z.array(z.string().uuid()),
     referencePaths: z.array(relativePathSchema).default([]),
-    executor: z.enum(["api", "codex"]),
+    executor: batchExecutorSchema,
+    codexOptions: codexOptionsSchema.optional(),
     instruction: z.string().max(10000).default(""),
     researchSelection: researchSelectionSchema.optional(),
     expectedPreviewHash: hashSchema.optional(),
@@ -418,8 +500,28 @@ export async function startService(options: ServiceOptions) {
         b.instruction,
         b.researchSelection,
         b.taskId,
+        b.codexOptions,
       ),
     );
+  });
+  app.post("/api/note/optimize/preview", (req, res) => {
+    const input = noteOptimizationInputSchema.parse(req.body);
+    res.json(processing!.previewNoteOptimization(input));
+  });
+  app.post("/api/note/optimize", async (req, res) => {
+    const { expectedPreviewHash, requestId, ...input } =
+      noteOptimizationInputSchema
+        .extend({
+          expectedPreviewHash: hashSchema,
+          requestId: z.string().uuid(),
+        })
+        .parse(req.body);
+    const job = processing!.createNoteOptimization(
+      input,
+      expectedPreviewHash,
+      requestId,
+    );
+    res.status(202).json(await processing!.run(job.id));
   });
   app.post("/api/jobs", (req, res) => {
     const b = batchInputSchema.parse(req.body);
@@ -434,6 +536,7 @@ export async function startService(options: ServiceOptions) {
           b.researchSelection,
           b.expectedPreviewHash,
           b.taskId,
+          b.codexOptions,
         ),
       );
   });
@@ -452,6 +555,34 @@ export async function startService(options: ServiceOptions) {
     res.json(processing!.get(j.id));
   });
   app.get("/api/proposals", (_req, res) => res.json(processing!.proposals()));
+  app.get("/api/codex/conversation", (req, res) => {
+    const { jobId, brief } = z
+      .object({ jobId: z.string().uuid(), brief: z.literal("1").optional() })
+      .parse(req.query);
+    res.json(processing!.conversation(jobId, brief !== "1"));
+  });
+  app.post("/api/proposals/:id/continue", async (req, res) => {
+    const { feedback, expectedHash, requestId, review } = z
+      .object({
+        feedback: z.string().trim().min(1).max(10000),
+        expectedHash: hashSchema,
+        requestId: z.string().uuid(),
+        review: codexReviewInputSchema.optional(),
+      })
+      .parse(req.body);
+    const job = processing!.continueWithCodex(
+      z.string().uuid().parse(req.params.id),
+      feedback,
+      expectedHash,
+      requestId,
+      review,
+    );
+    res
+      .status(202)
+      .json(
+        review && job.state !== "queued" ? job : await processing!.run(job.id),
+      );
+  });
   app.put("/api/proposals/:id", (req, res) => {
     const b = z
       .object({ markdown: z.string().max(500000), expectedHash: hashSchema })
@@ -510,6 +641,21 @@ export async function startService(options: ServiceOptions) {
       paperdesk: paperdesk!.profile(),
       encrypted: Boolean(options.encrypt),
     });
+  });
+  app.get("/api/settings/codex-cli", async (req, res) => {
+    const status = options.desktop ? await codexCliStatus() : "unavailable";
+    const catalog =
+      status === "ready" && req.query.catalog === "1"
+        ? await codexCliCatalog()
+        : undefined;
+    res.json({ status, catalog, defaults: readCodexDefaults() });
+  });
+  app.put("/api/settings/codex-cli", (req, res) => {
+    if (!options.desktop)
+      throw new AppError("请在桌面工作台保存 Codex CLI 默认配置", 409);
+    const defaults = codexOptionsSchema.parse(req.body);
+    atomicWrite(codexDefaultsPath, JSON.stringify(defaults));
+    res.json(defaults);
   });
   app.put("/api/settings/provider", async (req, res) => {
     const config = validateProvider(providerSchema.parse(req.body));

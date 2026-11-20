@@ -3,10 +3,17 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { resolveVaultSelection } from "../desktop/vault-selection.mjs";
-import { createNoteResolver } from "../shared/note-links.ts";
+import {
+  createNoteResolver,
+  localLinkTarget,
+  PARENT_NOTE_LABEL,
+} from "../shared/note-links.ts";
 import {
   MANAGED,
   sourceRefSchema,
+  type ChildNoteParent,
+  type ChildNoteResult,
+  type DeletedNote,
   type Note,
   type NoteSummary,
 } from "../shared/contracts.ts";
@@ -28,10 +35,42 @@ import {
   noteTitle,
   parseMarkdown,
   paperdeskBody,
+  withNoteTitle,
 } from "./markdown.ts";
 
 type Row = Record<string, any>;
 const LINK_INDEX_VERSION = "3";
+
+export function noteHref(from: string, to: string) {
+  return path.posix
+    .relative(path.posix.dirname(from), to)
+    .split("/")
+    .map((part) =>
+      encodeURIComponent(part).replace(
+        /[!'()*]/g,
+        (character) => "%" + character.charCodeAt(0).toString(16),
+      ),
+    )
+    .join("/");
+}
+function noteLink(from: string, to: string, label: string) {
+  return (
+    "[" +
+    label.replace(/[\\[\]*_$~<>&]/g, "\\$&") +
+    "](" +
+    noteHref(from, to) +
+    ")"
+  );
+}
+
+function linksTo(body: string, from: string, to: string) {
+  return markdownLinks(body).some(
+    (link) =>
+      link.style === "markdown" &&
+      localLinkTarget(link.target, from, link.style) === to,
+  );
+}
+
 export class Vault {
   root: string;
   scope: string;
@@ -605,37 +644,299 @@ export class Vault {
     delete result.draft;
     return result;
   }
-  create(title: string, noteType = "concept", content?: string) {
-    const id = randomUUID(),
-      folder = noteType === "learning-log" ? "Journal" : "Cards";
-    const relative = `${this.managed}/${folder}/${slug(title)}--${id.slice(0, 8)}.md`;
+  setTitle(relative: string, title: string, expected: string) {
+    const note = this.read(relative);
+    if (note.owner === "paperdesk")
+      throw new AppError("请在纸间管理文献笔记", 409, "PAPERDESK_REQUIRED");
+    if (note.hash !== expected)
+      throw new AppError(
+        "笔记已有新修改，请重新打开标题窗口后再试。",
+        409,
+        "VERSION_CONFLICT",
+      );
+    if (note.title === title) return note;
+    const next = withNoteTitle(note.content, title);
+    if (
+      note.draft &&
+      note.draft.content !== note.content &&
+      (note.draft.content !== next || note.draft.baseHash !== expected)
+    )
+      throw new AppError("请先打开这篇笔记，处理未保存的草稿。", 409);
+    return this.save(relative, next, expected);
+  }
+  private noteTrashRoot(create = false) {
+    const root = path.join(this.root, ".trash");
+    if (create) fs.mkdirSync(root, { recursive: true });
+    if (!fs.lstatSync(root).isDirectory())
+      throw new AppError("知识库回收站路径不可用", 409);
+    return root;
+  }
+  trashNote(relative: string, expected: string): DeletedNote {
+    const file = this.absolute(relative);
+    if (!fs.lstatSync(file).isFile())
+      throw new AppError("只可删除普通 Markdown 文件", 409);
+    const note = this.read(relative);
+    if (note.owner === "paperdesk")
+      throw new AppError("请在纸间管理文献笔记", 409, "PAPERDESK_REQUIRED");
+    if (
+      /\/(?:Inbox|Drafts)\//.test(relative) ||
+      /(?:^|\/)(?:AGENTS|Library)\.md$/i.test(relative)
+    )
+      throw new AppError("请在对应工作区管理这份文件", 409);
+    if (note.hash !== expected)
+      throw new AppError(
+        "笔记已有新修改，请重新核对后删除。",
+        409,
+        "VERSION_CONFLICT",
+      );
+    if (note.draft && note.draft.content !== note.content)
+      throw new AppError("请先打开这篇笔记，处理未保存的草稿。", 409);
+
+    const id = randomUUID();
+    const dir = path.join(this.noteTrashRoot(true), `kwb-note-${id}`);
+    fs.mkdirSync(dir);
+    const archived = path.join(dir, relative);
+    try {
+      fs.mkdirSync(path.dirname(archived), { recursive: true });
+      if (digest(readUtf8(file)) !== expected)
+        throw new AppError(
+          "笔记在删除前发生变化，请重新核对。",
+          409,
+          "VERSION_CONFLICT",
+        );
+      fs.renameSync(file, archived);
+    } catch (error) {
+      fs.rmSync(dir, { recursive: true, force: true });
+      throw error;
+    }
+    this.db.prepare("UPDATE notes SET missing=1 WHERE path=?").run(relative);
+    this.scanSignatures.delete(relative);
+    return { id, path: relative, hash: note.hash };
+  }
+  restoreDeletedNote({ id, path: relative, hash }: DeletedNote) {
+    const file = this.absolute(relative);
+    const dir = path.join(this.noteTrashRoot(), `kwb-note-${id}`);
+    if (!fs.lstatSync(dir).isDirectory())
+      throw new AppError("笔记已不在回收站中", 404);
+    const archive = safePath(dir, relative);
+    const entry = fs.lstatSync(archive, { bigint: true });
+    if (!entry.isFile() || digest(readUtf8(archive)) !== hash)
+      throw new AppError("回收站中的笔记已有变化，请核对文件后恢复。", 409);
+
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    try {
+      fs.linkSync(archive, file);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const existing = fs.lstatSync(file, { bigint: true });
+      // A retry can finish a restore interrupted after the exclusive link.
+      if (existing.dev !== entry.dev || existing.ino !== entry.ino)
+        throw new AppError("原位置已有文件，请先确认如何保留两份。", 409);
+    }
+    const saved = this.index(relative);
+    fs.unlinkSync(archive);
+    for (
+      let folder = path.dirname(archive);
+      inside(dir, folder);
+      folder = path.dirname(folder)
+    ) {
+      try {
+        fs.rmdirSync(folder);
+      } catch {
+        break;
+      }
+    }
+    return saved;
+  }
+  private newNotePath(title: string, noteType: string, id: string) {
+    const folder = noteType === "learning-log" ? "Journal" : "Cards";
+    const stem = slug(title);
+    const name =
+      Buffer.byteLength(stem) <= 242
+        ? stem
+        : Array.from(stem).slice(0, 59).join("");
+    return `${this.managed}/${folder}/${name}--${id.slice(0, 8)}.md`;
+  }
+  private newNoteContent(
+    title: string,
+    noteType: string,
+    id: string,
+    content?: string,
+  ) {
     const body =
       content ||
       `# ${title}\n\n${noteType === "learning-log" ? "## 本次问题\n\n\n## 过程与观察\n\n\n## 当前判断\n\n\n## 下一步与连接" : "## 核心问题与结论\n\n\n## 机制、模型或推导\n\n\n## 例子与边界\n\n\n## 尚未解决\n\n\n## 来源与连接"}\n\n`;
+    return formatMarkdown(
+      {
+        title,
+        note_type: noteType,
+        domain: "shared",
+        status: "working",
+        source: [],
+        tags: [],
+        kb_id: id,
+        ...(noteType === "learning-log"
+          ? {
+              date: new Intl.DateTimeFormat("en-CA", {
+                timeZone: "Asia/Shanghai",
+              }).format(new Date()),
+            }
+          : {}),
+      },
+      body,
+    );
+  }
+  create(title: string, noteType = "concept", content?: string) {
+    const id = randomUUID();
+    const relative = this.newNotePath(title, noteType, id);
     atomicWrite(
       this.absolute(relative),
-      formatMarkdown(
-        {
-          title,
-          note_type: noteType,
-          domain: "shared",
-          status: "working",
-          source: [],
-          tags: [],
-          kb_id: id,
-          ...(noteType === "learning-log"
-            ? {
-                date: new Intl.DateTimeFormat("en-CA", {
-                  timeZone: "Asia/Shanghai",
-                }).format(new Date()),
-              }
-            : {}),
-        },
-        body,
-      ),
+      this.newNoteContent(title, noteType, id, content),
       true,
     );
     return this.index(relative);
+  }
+  prepareChildNote(
+    parent: string,
+    title: string,
+    markdown: string,
+    id: string,
+  ) {
+    const relative = this.newNotePath(title, "concept", id);
+    let body = parseMarkdown(markdown).body.trim();
+    // Moving the draft into its own file keeps relative image and note links
+    // pointing at the same local resources as they did in the parent.
+    for (const link of markdownLinks(body)
+      .filter((item) => item.style === "markdown")
+      .reverse()) {
+      const local = localLinkTarget(link.target, parent, "markdown");
+      if (!local) continue;
+      const fragment = link.target.includes("#")
+        ? link.target.slice(link.target.indexOf("#"))
+        : "";
+      body =
+        body.slice(0, link.from) +
+        noteHref(relative, local) +
+        fragment +
+        body.slice(link.to);
+    }
+    const backlink = noteLink(relative, parent, PARENT_NOTE_LABEL);
+    const heading = body.match(/^# [^\n]+\n*/)?.[0];
+    const text =
+      (heading?.trimEnd() || "# " + title) +
+      "\n\n" +
+      backlink +
+      "\n\n" +
+      (heading ? body.slice(heading.length) : body) +
+      "\n";
+    return {
+      path: relative,
+      content: this.newNoteContent(title, "concept", id, text),
+    };
+  }
+  createChild(
+    title: string,
+    noteType: string,
+    request: ChildNoteParent,
+    content?: string,
+  ): ChildNoteResult {
+    const { path: parentPath, expectedHash, requestId } = request;
+    const parent = this.read(parentPath);
+    if (parent.owner === "paperdesk")
+      throw new AppError("请在纸间管理文献笔记", 409, "PAPERDESK_REQUIRED");
+
+    title = title.replace(/[\r\n]+/g, " ").trim() || "未命名笔记";
+    const childPath = this.newNotePath(title, noteType, requestId);
+    const childFile = this.absolute(childPath);
+    const existing = fs.existsSync(childFile)
+      ? this.read(childPath)
+      : undefined;
+    const backlink = noteLink(childPath, parentPath, PARENT_NOTE_LABEL);
+    if (existing) {
+      if (
+        existing.id !== requestId ||
+        !linksTo(existing.body || "", childPath, parentPath)
+      )
+        throw new AppError("子笔记文件已被占用，请重新创建。", 409);
+      // A retry after an interrupted response must not add the link twice.
+      if (linksTo(parent.body || "", parentPath, childPath))
+        return { child: existing, parent };
+    }
+    if (parent.hash !== expectedHash)
+      throw new AppError(
+        "父笔记已修改，请重新选择插入位置。",
+        409,
+        "VERSION_CONFLICT",
+      );
+
+    const { frontmatter } = parseMarkdown(parent.content);
+    const bodyStart = Math.max(
+      frontmatter.length,
+      parent.content.startsWith("\uFEFF") ? 1 : 0,
+    );
+    const inline = request.placement === "inline";
+    const offset = inline
+      ? request.offset
+      : Math.max(bodyStart, request.offset);
+    const before = parent.content.slice(0, offset);
+    const after = parent.content.slice(offset);
+    if (
+      offset < bodyStart ||
+      offset > parent.content.length ||
+      (before.endsWith("\r") && after.startsWith("\n")) ||
+      (/[\uD800-\uDBFF]$/.test(before) && /^[\uDC00-\uDFFF]/.test(after)) ||
+      (!inline && offset !== bodyStart && after && !/^\r?\n/.test(after))
+    )
+      throw new AppError("插入位置已变化，请重新在正文右键。", 409);
+    const eol = parent.content.match(/\r?\n/)?.[0] || "\n";
+    const prefix =
+      inline || offset === 0 || before.endsWith(eol + eol)
+        ? ""
+        : before.endsWith(eol)
+          ? eol
+          : eol + eol;
+    const suffix = inline ? "" : after.startsWith(eol) ? eol : eol + eol;
+    const text = prefix + noteLink(parentPath, childPath, title) + suffix;
+    const next = before + text + after;
+    if (!linksTo(parseMarkdown(next).body, parentPath, childPath))
+      throw new AppError("请在正文段落或空白行上右键创建子笔记。", 409);
+    if (Buffer.byteLength(next) > 8 * 1024 * 1024)
+      throw new AppError("父笔记超过 8 MiB，无法插入链接。", 413);
+    if (
+      parent.draft &&
+      parent.draft.content !== parent.content &&
+      (parent.draft.content !== next || parent.draft.baseHash !== expectedHash)
+    )
+      throw new AppError("请先处理父笔记未保存的草稿。", 409);
+
+    const body = content?.replace(/^[^\n]*\n+/, "") || "";
+    if (!existing)
+      atomicWrite(
+        childFile,
+        this.newNoteContent(
+          title,
+          noteType,
+          requestId,
+          "# " + title + "\n\n" + backlink + "\n\n" + body,
+        ),
+        true,
+      );
+    const child = this.index(childPath);
+    try {
+      return {
+        child,
+        parent: this.save(parentPath, next, expectedHash),
+        insertion: { offset, text },
+      };
+    } catch (error) {
+      // Keep the child's data and the parent recovery draft on a partial write.
+      throw new AppError(
+        "子笔记已创建，父笔记链接保存未确认。" + (error as Error).message,
+        error instanceof AppError ? error.status : 500,
+        error instanceof AppError ? error.code : "CHILD_LINK_UNCONFIRMED",
+        { childPath },
+      );
+    }
   }
   move(from: string, to: string, expected: string, apply = false) {
     const source = this.read(from);

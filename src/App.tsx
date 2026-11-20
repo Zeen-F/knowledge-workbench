@@ -1,5 +1,19 @@
-import { createNoteResolver } from "../shared/note-links";
+import {
+  createNoteResolver,
+  localLinkTarget,
+  PARENT_NOTE_LABEL,
+  type LinkStyle,
+} from "../shared/note-links";
+import { noteBodyLinks } from "../shared/markdown-links";
+import { noteOutline } from "../shared/note-outline";
 import { NoteTree } from "./NoteTree";
+import { NoteOptimization } from "./NoteOptimization";
+import { NoteColorMenu } from "./NoteColorMenu";
+import {
+  NewNoteDialog,
+  type NewNoteInput,
+  type NewNoteType,
+} from "./NewNoteDialog";
 import { matchesNoteSection } from "./note-navigation";
 import { RecentNotes } from "./RecentNotes";
 import { useSidebarLayout } from "./SidebarLayout";
@@ -40,6 +54,8 @@ import {
 } from "lucide-react";
 import type {
   Capture,
+  ChildNoteResult,
+  DeletedNote,
   Job,
   Note,
   NoteSummary,
@@ -54,7 +70,7 @@ import {
   shortDate,
   nativeAction,
 } from "./client";
-import { Editor, type EditorHandle } from "./Editor";
+import { Editor, type ChildNoteAnchor, type EditorHandle } from "./Editor";
 import { CollectionInbox } from "./CollectionInbox";
 import { Diff, Modal, Review, Settings } from "./Panels";
 import { assetUrl } from "./markdown";
@@ -69,7 +85,27 @@ type Tab = {
   error?: string;
   latest?: Note;
 };
+type MovePreview = {
+  changes: { path: string; before: string; after: string }[];
+};
+type NoteCreation = {
+  type: NewNoteType;
+  parent?: ChildNoteAnchor & { path: string; requestId: string };
+};
+type ResolvedLink = { path?: string | null; outside?: boolean };
 type View = "all" | "concept" | "learning-log" | "inbox" | "review";
+
+function editorLink(href: string): { target: string; style: LinkStyle } {
+  if (href.startsWith("kb:")) {
+    try {
+      return { target: decodeURIComponent(href.slice(3)), style: "wiki" };
+    } catch {
+      return { target: href, style: "wiki" };
+    }
+  }
+  return { target: href, style: "markdown" };
+}
+
 export default function App() {
   const sidebar = useSidebarLayout();
   useEffect(() => {
@@ -106,19 +142,36 @@ export default function App() {
     [source, setSource] = useState(false),
     [right, setRight] = useState(true),
     [settings, setSettings] = useState(false),
-    [create, setCreate] = useState(false),
-    [newTitle, setNewTitle] = useState(""),
-    [newType, setNewType] = useState<"concept" | "learning-log">("concept");
-  const [toast, setToast] = useState<{ text: string; error: boolean } | null>(
-      null,
-    ),
+    [creation, setCreation] = useState<NoteCreation | null>(null);
+  const resolveIndexedLink = useMemo(
+    () =>
+      createNoteResolver(
+        notes.filter((note) => !note.missing).map((note) => note.path),
+      ),
+    [notes],
+  );
+  const [toast, setToast] = useState<{
+      text: string;
+      error: boolean;
+      undo?: DeletedNote;
+    } | null>(null),
     [history, setHistory] = useState<any[] | null>(null),
     [historyItem, setHistoryItem] = useState<any>(null),
     [conflict, setConflict] = useState(false),
-    [moving, setMoving] = useState(false),
+    [moving, setMoving] = useState<NoteSummary | null>(null),
     [movePath, setMovePath] = useState(""),
-    [movePreview, setMovePreview] = useState<any>(null),
+    [movePreview, setMovePreview] = useState<
+      (MovePreview & { hash: string }) | null
+    >(null),
     [relations, setRelations] = useState<any>(null);
+  const [titleEdit, setTitleEdit] = useState<{
+    note: NoteSummary;
+    value: string;
+  } | null>(null);
+  const [noteActionPending, setNoteActionPending] = useState(false);
+  const [deleting, setDeleting] = useState<NoteSummary | null>(null);
+  const [optimizing, setOptimizing] = useState<NoteSummary | null>(null);
+  const [manualLink, setManualLink] = useState("");
   const [attachment, setAttachment] = useState<any>(null);
   const [, draw] = useState(0),
     tabs = useRef<Record<string, Tab>>({}),
@@ -128,10 +181,20 @@ export default function App() {
     editor = useRef<EditorHandle>(null),
     imageInput = useRef<HTMLInputElement>(null),
     activeRef = useRef(active),
+    viewRef = useRef(view),
     statusRef = useRef(status),
     toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const openGeneration = useRef(0),
     refreshGeneration = useRef(0);
+  const [referenceJump, setReferenceJump] = useState<{
+    path: string;
+    offset: number;
+  } | null>(null);
+  useEffect(() => {
+    if (referenceJump?.path !== active || !editor.current) return;
+    editor.current.goTo(referenceJump.offset, true);
+    setReferenceJump(null);
+  }, [referenceJump, active]);
   const [collectionEntry, setCollectionEntry] = useState(0);
   const inboxLeave = useRef<(() => Promise<boolean>) | null>(null);
   async function navigate(next: View) {
@@ -149,12 +212,16 @@ export default function App() {
     [],
   );
   activeRef.current = active;
+  viewRef.current = view;
   statusRef.current = status;
   const render = () => draw((n) => n + 1);
-  const notify = (text: string, error = false) => {
-    setToast({ text, error });
+  const notify = (text: string, error = false, undo?: DeletedNote) => {
+    setToast({ text, error, undo });
     if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(null), error ? 10000 : 4500);
+    toastTimer.current = setTimeout(
+      () => setToast(null),
+      undo ? 15000 : error ? 10000 : 4500,
+    );
   };
   const localKey = (p: string) =>
     `kwb-draft:${statusRef.current?.vault?.id}:${p}`;
@@ -243,7 +310,7 @@ export default function App() {
       }
     }
   }
-  async function openNote(path: string) {
+  async function openNote(path: string, childPath?: string) {
     if (inboxLeave.current && !(await inboxLeave.current())) return;
     const generation = ++openGeneration.current;
     try {
@@ -284,6 +351,17 @@ export default function App() {
         };
         setTabOrder((prev) => (prev.includes(path) ? prev : [...prev, path]));
         if (recovered) notify("已恢复未提交草稿，请核对后保存。");
+      }
+      if (childPath) {
+        const references = noteBodyLinks(tabs.current[path].content).filter(
+          ({ target, style }) =>
+            localLinkTarget(target, path, style) === childPath ||
+            resolveIndexedLink(target, path, style) === childPath,
+        );
+        const reference =
+          references.find(({ style }) => style === "markdown") || references[0];
+        if (reference) setReferenceJump({ path, offset: reference.from });
+        else notify("已打开父笔记，正文里暂时找不到这条子笔记链接。");
       }
       setActive(path);
       if (!path.startsWith(`${MANAGED}/`)) setScope("vault");
@@ -403,8 +481,7 @@ export default function App() {
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") {
         e.preventDefault();
-        setNewTitle("");
-        setCreate(true);
+        if (!document.querySelector('[aria-modal="true"]')) startCreate();
       }
     };
     let resuming = false;
@@ -462,7 +539,7 @@ export default function App() {
       current = false;
       clearTimeout(timer);
     };
-  }, [query, scope, status?.vault?.scopePath]);
+  }, [query, scope, status?.vault?.scopePath, notes]);
   useEffect(() => {
     let current = true;
     setRelations(null);
@@ -478,30 +555,69 @@ export default function App() {
       current = false;
     };
   }, [active, notes]);
-  async function addNote() {
-    try {
-      const note = await api<Note>("POST", "/notes", {
-        title: newTitle.trim() || "未命名笔记",
-        noteType: newType,
+  function startCreate(noteType?: NewNoteType) {
+    if (!statusRef.current?.vault) return;
+    setCreation({
+      type:
+        noteType ??
+        (viewRef.current === "learning-log" ? "learning-log" : "concept"),
+    });
+  }
+  function startCreateChild(path: string, anchor: ChildNoteAnchor) {
+    const tab = tabs.current[path];
+    if (!tab || tab.note.owner === "paperdesk") return;
+    setCreation({
+      type: tab.note.noteType === "learning-log" ? "learning-log" : "concept",
+      parent: { ...anchor, path, requestId: crypto.randomUUID() },
+    });
+  }
+  async function addNote(input: NewNoteInput) {
+    const parent = creation?.parent;
+    let note: Note;
+    if (parent) {
+      const { path, content, offset, placement, requestId } = parent;
+      const tab = tabs.current[path];
+      const checkPosition = () => {
+        if (!tab || tabs.current[path] !== tab || tab.content !== content)
+          throw new Error("父笔记已修改，请重新在正文选择插入位置。");
+      };
+      checkPosition();
+      await flushPath(path);
+      checkPosition();
+      const result = await api<ChildNoteResult>("POST", "/notes", {
+        ...input,
+        parent: { path, offset, placement, requestId, expectedHash: tab.hash },
       });
-      setCreate(false);
-      setNewTitle("");
-      await refresh();
+      note = result.child;
+      if (tabs.current[path] === tab && tab.content === content) {
+        if (activeRef.current === path && result.insertion)
+          editor.current?.applySavedInsertion(content, result.insertion);
+        tab.note = result.parent;
+        tab.hash = result.parent.hash;
+        tab.content = result.parent.content;
+        tab.status = "saved";
+        tab.generation++;
+      }
+    } else {
+      note = await api<Note>("POST", "/notes", input);
       setScope("workbench");
-      await openNote(note.path);
-    } catch (e) {
-      notify((e as Error).message, true);
     }
+    setCreation(null);
+    void refresh().catch((e) => notify(e.message, true));
+    await openNote(note.path);
+  }
+  function removeTab(path: string) {
+    delete tabs.current[path];
+    setTabOrder((prev) => {
+      const next = prev.filter((p) => p !== path);
+      if (activeRef.current === path) setActive(next.at(-1) || "");
+      return next;
+    });
   }
   async function closeTab(path: string) {
     try {
       await flushPath(path);
-      delete tabs.current[path];
-      setTabOrder((prev) => {
-        const next = prev.filter((p) => p !== path);
-        if (activeRef.current === path) setActive(next.at(-1) || "");
-        return next;
-      });
+      removeTab(path);
     } catch (e) {
       notify("笔记尚未保存，标签页已保留：" + (e as Error).message, true);
     }
@@ -519,47 +635,51 @@ export default function App() {
       throw e;
     }
   }
-  async function followLink(target: string) {
-    const style = target.startsWith("kb:") ? "wiki" : "markdown";
-    if (style === "wiki")
-      try {
-        target = decodeURIComponent(target.slice(3));
-      } catch {}
+  async function resolveEditorLink(
+    target: string,
+    style: LinkStyle,
+    from: string,
+  ): Promise<ResolvedLink> {
+    if (!localLinkTarget(target, from, style)) return {};
+    if (statusRef.current?.vault?.scopePath)
+      return api<ResolvedLink>(
+        "GET",
+        "/resolve-link?" + new URLSearchParams({ path: from, target, style }),
+      );
+    return { path: resolveIndexedLink(target, from, style) };
+  }
+  async function loadLinkPreview(href: string) {
+    const { target, style } = editorLink(href);
+    const from = active;
+    const { path } = await resolveEditorLink(target, style, from);
+    if (path && activeRef.current === from)
+      return api<Note>("GET", "/note?path=" + encodeURIComponent(path));
+  }
+  async function followLink(href: string, label: string) {
+    const { target, style } = editorLink(href);
     if (/^https?:/.test(target)) {
       void openExternal(target);
       return;
     }
-    const normalized = target.split("#")[0];
-    if (status?.vault?.scopePath) {
-      const from = active;
-      const generation = ++openGeneration.current;
-      try {
-        const result = await api(
-          "GET",
-          "/resolve-link?" + new URLSearchParams({ path: from, target, style }),
+    const from = active;
+    const generation = ++openGeneration.current;
+    try {
+      const result = await resolveEditorLink(target, style, from);
+      if (activeRef.current !== from || openGeneration.current !== generation)
+        return;
+      if (result.outside)
+        notify("此链接指向其他目录，请打开整个知识库后查看。");
+      else if (result.path)
+        await openNote(
+          result.path,
+          label === PARENT_NOTE_LABEL ? from : undefined,
         );
-        if (activeRef.current !== from || openGeneration.current !== generation)
-          return;
-        if (result.outside)
-          notify("此链接指向其他目录，请打开整个知识库后查看。");
-        else if (result.path) await openNote(result.path);
-        else {
-          setQuery(normalized);
-          notify("未找到唯一匹配的笔记，已按链接内容查找。");
-        }
-      } catch (error) {
-        notify((error as Error).message, true);
+      else {
+        setQuery(target.split("#")[0]);
+        notify("未找到唯一匹配的笔记，已按链接内容查找。");
       }
-      return;
-    }
-    const resolved = createNoteResolver(
-      notes.filter((n) => !n.missing).map((n) => n.path),
-    )(target, active, style);
-    const found = notes.find((n) => n.path === resolved);
-    if (found) void openNote(found.path);
-    else {
-      setQuery(normalized);
-      notify("已按链接内容查找笔记");
+    } catch (error) {
+      notify((error as Error).message, true);
     }
   }
   async function showHistory() {
@@ -599,41 +719,167 @@ export default function App() {
       notify((e as Error).message, true);
     }
   }
-  async function startMove() {
+  async function flushNoteAction(path: string) {
+    if (!tabs.current[path]) {
+      let draft: string | null = null;
+      try {
+        draft = localStorage.getItem(localKey(path));
+      } catch {
+        // The embedded panel uses the recovery draft checked by the service.
+      }
+      if (draft) throw new Error("请先打开这篇笔记，处理未保存的草稿。");
+    }
+    await flushPath(path);
+  }
+  async function copyNoteLink(note: NoteSummary) {
+    const stem = note.path.replace(/\.md$/i, "");
+    const link = /[#\[\]]/.test(stem)
+      ? `[笔记](/${note.path.split("/").map(encodeURIComponent).join("/")})`
+      : `[[${stem}]]`;
     try {
-      await flushPath(active);
-      setMoving(true);
-      setMovePath(active);
-      setMovePreview(null);
-    } catch (e) {
-      notify((e as Error).message, true);
+      await navigator.clipboard.writeText(link);
+      notify("笔记链接已复制");
+    } catch {
+      setManualLink(link);
     }
   }
-  async function move(apply: boolean) {
+  async function trashNote() {
+    if (!deleting || noteActionPending) return;
+    const { path, hash } = deleting;
+    const dirty = tabs.current[path]?.dirty;
+    setNoteActionPending(true);
     try {
-      const result = await api("POST", "/note/move", {
-        from: active,
-        to: movePath,
-        expectedHash: tabs.current[active].hash,
-        apply,
+      await flushNoteAction(path);
+      const receipt = await api<DeletedNote>("POST", "/note/trash", {
+        path,
+        expectedHash: dirty ? (tabs.current[path]?.hash ?? hash) : hash,
       });
-      if (!apply) {
-        setMovePreview(result);
-        return;
+      openGeneration.current++;
+      removeTab(path);
+      setNotes((prev) => prev.filter((note) => note.path !== path));
+      setResults((prev) => prev?.filter((note) => note.path !== path) ?? null);
+      setDeleting(null);
+      notify("笔记已移到知识库回收站", false, receipt);
+      void refresh().catch(() => {});
+    } catch (error) {
+      notify((error as Error).message, true);
+    } finally {
+      setNoteActionPending(false);
+    }
+  }
+  async function restoreNote(receipt: DeletedNote) {
+    if (noteActionPending) return;
+    setNoteActionPending(true);
+    try {
+      await api<Note>("POST", "/note/restore", receipt);
+      notify("笔记已恢复到原位置");
+      void refresh().catch((e) => notify(e.message, true));
+    } catch (error) {
+      notify((error as Error).message, true, receipt);
+    } finally {
+      setNoteActionPending(false);
+    }
+  }
+  async function saveTitle() {
+    if (!titleEdit || noteActionPending) return;
+    const { note, value } = titleEdit;
+    const { path } = note;
+    const title = value.trim();
+    if (!title || title === note.title) return;
+    setNoteActionPending(true);
+    try {
+      await flushNoteAction(path);
+      const tab = tabs.current[path];
+      if (tab && tab.note.title !== note.title)
+        throw new Error("笔记标题已有变化，请重新打开标题窗口后再试。");
+      const saved = await api<Note>("POST", "/note/title", {
+        path,
+        title,
+        expectedHash: tab?.hash ?? note.hash,
+      });
+      if (tab) {
+        tab.note = saved;
+        tab.content = saved.content;
+        tab.hash = saved.hash;
       }
-      const old = active;
-      delete tabs.current[old];
-      setTabOrder((order) => order.filter((p) => p !== old));
-      setMoving(false);
-      await refresh();
-      await openNote(movePath);
-      notify("笔记已移动，引用链接已更新。");
+      setTitleEdit(null);
+      notify("标题已保存");
+      void refresh().catch((e) => notify(e.message, true));
     } catch (e) {
       notify((e as Error).message, true);
+    } finally {
+      setNoteActionPending(false);
+    }
+  }
+
+  function startMove(note: NoteSummary) {
+    setMoving(note);
+    setMovePath(note.path);
+    setMovePreview(null);
+  }
+
+  async function move(apply: boolean) {
+    if (!moving || noteActionPending) return;
+    const from = moving.path;
+    const to = movePath;
+    setNoteActionPending(true);
+    try {
+      await flushNoteAction(from);
+      const tab = tabs.current[from];
+      const hash = tab?.hash ?? moving.hash;
+      if (!apply) {
+        const preview = await api<MovePreview>("POST", "/note/move", {
+          from,
+          to,
+          expectedHash: hash,
+          apply: false,
+        });
+        setMovePreview({ ...preview, hash });
+        return;
+      }
+      if (movePreview?.hash !== hash) {
+        setMovePreview(null);
+        throw new Error("笔记版本已有变化，请重新预览链接更新。");
+      }
+      const { note } = await api<{ note: Note }>("POST", "/note/move", {
+        from,
+        to,
+        expectedHash: hash,
+        apply: true,
+      });
+      if (tab) {
+        delete tabs.current[from];
+        tabs.current[note.path] = {
+          note,
+          content: note.content,
+          hash: note.hash,
+          dirty: false,
+          generation: 0,
+          status: "saved",
+        };
+        setTabOrder((order) => order.map((p) => (p === from ? note.path : p)));
+      }
+      if (activeRef.current === from) {
+        setActive(note.path);
+        if (!note.path.startsWith(`${MANAGED}/`)) setScope("vault");
+      }
+      setMoving(null);
+      notify("笔记已移动，引用链接已更新。");
+      void refresh().catch((e) => notify(e.message, true));
+    } catch (e) {
+      notify((e as Error).message, true);
+    } finally {
+      setNoteActionPending(false);
     }
   }
   const t = tabs.current[active],
-    pending = proposals.filter((p) => p.status === "pending").length;
+    pending = proposals.filter(
+      (p) => p.status === "pending" && !p.supersededBy,
+    ).length;
+  const outline = useMemo(
+    () => noteOutline(t?.content || "").filter((item) => item.level > 1),
+    [t?.content],
+  );
   const effectiveScope = status?.vault?.scopePath ? "vault" : scope;
   const scopedNotes = useMemo(
     () =>
@@ -755,11 +1001,7 @@ export default function App() {
         )}
         <button
           className="new-note"
-          onClick={() => {
-            setNewTitle("");
-            setNewType(view === "learning-log" ? "learning-log" : "concept");
-            setCreate(true);
-          }}
+          onClick={() => startCreate()}
           disabled={!status?.vault}
         >
           <Plus size={16} />
@@ -840,7 +1082,16 @@ export default function App() {
             }
             active={["inbox", "review"].includes(view) ? "" : active}
             dirty={(p) => Boolean(tabs.current[p]?.dirty)}
+            canOptimize={Boolean(status?.capabilities?.noteOptimization)}
             onOpen={(p) => void openNote(p)}
+            onAction={(action, note) => {
+              if (action === "title") setTitleEdit({ note, value: note.title });
+              else if (action === "move") startMove(note);
+              else if (action === "copy-link") void copyNoteLink(note);
+              else if (action === "optimize")
+                setOptimizing(tabs.current[note.path]?.note ?? note);
+              else setDeleting(tabs.current[note.path]?.note ?? note);
+            }}
           />
           {!visible.length && (
             <p className="sidebar-empty">
@@ -966,6 +1217,7 @@ export default function App() {
             proposals={proposals}
             jobs={jobs}
             onOpen={openNote}
+            saveTarget={flushNoteAction}
             refresh={refresh}
             notify={notify}
           />
@@ -1001,7 +1253,7 @@ export default function App() {
               <button
                 className="icon"
                 aria-label="新建笔记"
-                onClick={() => setCreate(true)}
+                onClick={() => startCreate()}
               >
                 <Plus size={15} />
               </button>
@@ -1018,13 +1270,7 @@ export default function App() {
                       : "正在浏览整个 Obsidian 仓库，也可以切回“我的知识库”专注记录。"}
                 </p>
                 <div className="start-actions">
-                  <button
-                    onClick={() => {
-                      setNewTitle("");
-                      setNewType("concept");
-                      setCreate(true);
-                    }}
-                  >
+                  <button onClick={() => startCreate("concept")}>
                     <FilePenLine size={25} strokeWidth={1.4} />
                     <strong>写一篇知识笔记</strong>
                     <span>把理解和条件写清楚</span>
@@ -1059,6 +1305,12 @@ export default function App() {
                       >
                         <Italic size={15} />
                       </button>
+                      <NoteColorMenu
+                        onSelect={(color) => {
+                          if (!editor.current?.setTextColor(color))
+                            notify("请选中要设置颜色的正文。", true);
+                        }}
+                      />
                       <span className="toolbar-separator" />
                       <button
                         title="插入公式"
@@ -1079,6 +1331,19 @@ export default function App() {
                         onClick={() => editor.current?.wrap("[[", "]]")}
                       >
                         <Link2 size={15} />
+                      </button>
+                      <button
+                        title="插入笔记目录"
+                        onClick={() => {
+                          const existing = t.content.match(
+                            /^[ \t]*\[TOC\][ \t]*$/m,
+                          );
+                          if (existing?.index !== undefined)
+                            editor.current?.goTo(existing.index);
+                          else editor.current?.wrap("\n\n[TOC]\n\n", "");
+                        }}
+                      >
+                        <ListTree size={15} />
                       </button>
                       <input
                         ref={imageInput}
@@ -1124,7 +1389,7 @@ export default function App() {
                       </button>
                       <button
                         title="重命名或移动笔记"
-                        onClick={() => void startMove()}
+                        onClick={() => startMove(t.note)}
                         disabled={t.note.owner === "paperdesk"}
                       >
                         <MoveRight size={16} />
@@ -1169,6 +1434,12 @@ export default function App() {
                     onChange={(content) => change(active, content)}
                     onImages={insertImages}
                     onLink={followLink}
+                    loadLinkPreview={loadLinkPreview}
+                    onCreateChild={
+                      t.note.owner === "paperdesk"
+                        ? undefined
+                        : (anchor) => startCreateChild(active, anchor)
+                    }
                   />
                   <footer className="editor-status">
                     <span>
@@ -1231,20 +1502,18 @@ export default function App() {
                     </div>
                     <section>
                       <h3>目录</h3>
-                      {[...t.content.matchAll(/^(#{1,4})\s+(.+)$/gm)]
-                        .filter((m) => m[1].length > 1)
-                        .map((m, i) => (
-                          <button
-                            className="outline-link"
-                            key={i}
-                            style={{ paddingLeft: (m[1].length - 2) * 10 }}
-                            onClick={() => {
-                              editor.current?.goTo(m.index || 0);
-                            }}
-                          >
-                            {m[2]}
-                          </button>
-                        ))}
+                      {outline.map(({ title, level, offset }) => (
+                        <button
+                          className="outline-link"
+                          key={offset}
+                          style={{ paddingLeft: (level - 2) * 10 }}
+                          onClick={() => {
+                            editor.current?.goTo(offset);
+                          }}
+                        >
+                          {title}
+                        </button>
+                      ))}
                     </section>
                     <section>
                       <h3>相关笔记</h3>
@@ -1353,6 +1622,17 @@ export default function App() {
         >
           {toast.error ? <span>!</span> : <Check size={16} />}
           <p>{toast.text}</p>
+          {toast.undo && (
+            <button
+              className="secondary"
+              disabled={noteActionPending}
+              onClick={() => {
+                if (toast.undo) void restoreNote(toast.undo);
+              }}
+            >
+              撤销删除
+            </button>
+          )}
           <button
             className="icon"
             aria-label="关闭提示"
@@ -1382,40 +1662,35 @@ export default function App() {
           </p>
         </Modal>
       )}
-      {create && (
-        <Modal title="写一篇新笔记" onClose={() => setCreate(false)}>
-          <label>
-            标题
-            <input
-              autoFocus
-              aria-label="新笔记标题"
-              value={newTitle}
-              onChange={(e) => setNewTitle(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void addNote();
-              }}
-              placeholder="从一个具体的问题开始"
-            />
-          </label>
-          <label>
-            类型
-            <select
-              value={newType}
-              onChange={(e) => setNewType(e.target.value as any)}
-            >
-              <option value="concept">主题知识卡</option>
-              <option value="learning-log">学习记录</option>
-            </select>
-          </label>
-          <footer className="modal-footer">
-            <button className="secondary" onClick={() => setCreate(false)}>
-              取消
-            </button>
-            <button className="primary" onClick={() => void addNote()}>
-              开始写作
-            </button>
-          </footer>
-        </Modal>
+      {creation && (
+        <NewNoteDialog
+          initialType={creation.type}
+          initialTitle={creation.parent?.title}
+          child={Boolean(creation.parent)}
+          onCreate={addNote}
+          onClose={() => setCreation(null)}
+        />
+      )}
+      {optimizing && (
+        <NoteOptimization
+          note={optimizing}
+          notes={scopedNotes}
+          scope={effectiveScope}
+          saveSelected={async (paths) => {
+            await Promise.all(paths.map(flushNoteAction));
+          }}
+          onClose={() => setOptimizing(null)}
+          onStarted={(job) => {
+            setOptimizing(null);
+            setJobs((current) => [
+              job,
+              ...current.filter((item) => item.id !== job.id),
+            ]);
+            notify("已提交笔记优化，可在「待审稿」查看进度。");
+            void navigate("review");
+            void refresh().catch((e) => notify(e.message, true));
+          }}
+        />
       )}
       {history && (
         <Modal title="历史版本" wide onClose={() => setHistory(null)}>
@@ -1518,8 +1793,112 @@ export default function App() {
           </footer>
         </Modal>
       )}
-      {moving && t && (
-        <Modal title="重命名或移动笔记" wide onClose={() => setMoving(false)}>
+      {manualLink && (
+        <Modal
+          title="复制笔记链接"
+          initialFocus='input[name="note-link"]'
+          onClose={() => setManualLink("")}
+        >
+          <label>
+            笔记链接
+            <input
+              name="note-link"
+              value={manualLink}
+              readOnly
+              onFocus={(event) => event.currentTarget.select()}
+            />
+          </label>
+        </Modal>
+      )}
+      {deleting && (
+        <Modal
+          title="删除笔记"
+          onClose={() => {
+            if (!noteActionPending) setDeleting(null);
+          }}
+        >
+          <p className="note-delete-description">
+            将「{deleting.title}」移到知识库回收站？你可以撤销删除。
+          </p>
+          <p className="muted note-delete-description">{deleting.path}</p>
+          <footer className="modal-footer">
+            <button
+              className="secondary"
+              disabled={noteActionPending}
+              onClick={() => setDeleting(null)}
+            >
+              取消
+            </button>
+            <button
+              className="primary note-delete-confirm"
+              disabled={noteActionPending}
+              onClick={() => void trashNote()}
+            >
+              {noteActionPending ? "正在移到回收站…" : "移到回收站"}
+            </button>
+          </footer>
+        </Modal>
+      )}
+      {titleEdit && (
+        <Modal
+          title="修改笔记标题"
+          initialFocus='input[name="note-title"]'
+          onClose={() => {
+            if (!noteActionPending) setTitleEdit(null);
+          }}
+        >
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void saveTitle();
+            }}
+          >
+            <label>
+              新标题
+              <input
+                name="note-title"
+                value={titleEdit.value}
+                maxLength={200}
+                required
+                readOnly={noteActionPending}
+                onFocus={(e) => e.currentTarget.select()}
+                onChange={(e) =>
+                  setTitleEdit({ ...titleEdit, value: e.target.value })
+                }
+              />
+            </label>
+            <footer className="modal-footer">
+              <button
+                type="button"
+                className="secondary"
+                disabled={noteActionPending}
+                onClick={() => setTitleEdit(null)}
+              >
+                取消
+              </button>
+              <button
+                type="submit"
+                className="primary"
+                disabled={
+                  noteActionPending ||
+                  !titleEdit.value.trim() ||
+                  titleEdit.value.trim() === titleEdit.note.title
+                }
+              >
+                {noteActionPending ? "正在保存…" : "保存标题"}
+              </button>
+            </footer>
+          </form>
+        </Modal>
+      )}
+      {moving && (
+        <Modal
+          title="重命名或移动笔记"
+          wide
+          onClose={() => {
+            if (!noteActionPending) setMoving(null);
+          }}
+        >
           {status?.vault?.scopePath && (
             <p className="muted">
               当前只更新所选子文件夹内的链接。如需同时更新其他目录的引用，请先打开整个知识库。
@@ -1529,6 +1908,7 @@ export default function App() {
             知识库内的新位置
             <input
               value={movePath}
+              readOnly={noteActionPending}
               onChange={(e) => {
                 setMovePath(e.target.value);
                 setMovePreview(null);
@@ -1540,7 +1920,7 @@ export default function App() {
               <p>
                 将更新以下 {movePreview.changes.length} 篇笔记中的可解析链接：
               </p>
-              {movePreview.changes.map((c: any) => (
+              {movePreview.changes.map((c) => (
                 <details key={c.path}>
                   <summary>{c.path}</summary>
                   <Diff before={c.before} after={c.after} />
@@ -1549,12 +1929,20 @@ export default function App() {
             </div>
           )}
           <footer className="modal-footer">
-            <button className="secondary" onClick={() => setMoving(false)}>
+            <button
+              className="secondary"
+              disabled={noteActionPending}
+              onClick={() => setMoving(null)}
+            >
               返回
             </button>
             <button
               className="primary"
-              disabled={movePath === active}
+              disabled={
+                noteActionPending ||
+                !movePath.trim() ||
+                movePath === moving.path
+              }
               onClick={() => void move(Boolean(movePreview))}
             >
               {movePreview ? "确认移动并更新链接" : "预览链接更新"}

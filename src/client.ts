@@ -10,6 +10,17 @@ export async function api<T = any>(
   body?: unknown,
   retry = true,
 ): Promise<T> {
+  if (window.workbench?.invokeResult) {
+    const result = await window.workbench.invokeResult(method, route, body);
+    // Keep version conflicts and other structured errors in the renderer realm.
+    if (result.error)
+      throw Object.assign(new ApiError(result.error), {
+        code: result.code,
+        details: result.details,
+        status: result.status,
+      });
+    return result.data as T;
+  }
   if (window.workbench) return window.workbench.invoke(method, route, body);
   ready ||= fetch("/api/session", { credentials: "same-origin" })
     .then((r) => {

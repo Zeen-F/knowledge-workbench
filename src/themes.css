@@ -330,6 +330,9 @@ a,
 .cm-content .cm-strong {
   color: var(--ink);
 }
+.cm-content .note-inline-color .cm-strong {
+  color: inherit;
+}
 .properties-fold {
   border-color: var(--line);
 }

@@ -7,7 +7,14 @@ import {
   type StateField,
 } from "@codemirror/state";
 import { EditorView, type DecorationSet } from "@codemirror/view";
-import { previewField } from "../src/editor-preview.ts";
+import {
+  finishPreviewPointerSelection,
+  previewField,
+} from "../src/editor-preview.ts";
+import { renderMarkdown } from "../src/markdown.ts";
+import { editNoteColor, noteInlineSpans } from "../src/note-color-editing.ts";
+import { noteOutline } from "../shared/note-outline.ts";
+import { noteTitle } from "../server/markdown.ts";
 
 function fixture(doc: string, anchor = 0) {
   const calls = { markdown: 0, math: 0 };
@@ -49,6 +56,125 @@ function widgets(value: PreviewValue) {
     (entry) => entry.decoration.spec.widget,
   );
 }
+
+test("note colors render in Markdown while keeping bold, math, and regular HTML handling", () => {
+  const source = [
+    "**<span style='color: #A43F34;'>关键条件</span>**",
+    "",
+    "| 符号 | 说明 |",
+    "| --- | --- |",
+    '| $V_{BE}$ | <span style="color: #123">参考定义</span> |',
+    "",
+    '<span style="color: #a43f34; background: url(unsafe)">字面内容</span>',
+    "",
+    '`<span style="color: #a43f34">样例</span>`',
+    "",
+    '所以<strong style="color: var(--color-orange, #B56A28)">正确符号和 $V_{OS}$</strong>，再验证。',
+    '<span style="color: #2a5f9a">**蓝色结论**</span>',
+    '<strong style="color: var(--color-orange, orange)">未知色值</strong>',
+  ].join("\n");
+  const html = renderMarkdown(source, "synthetic.md", { inertLinks: true });
+  assert.match(
+    html,
+    /<strong><span class="note-inline-color"[^>]+>关键条件<\/span><\/strong>/,
+  );
+  assert.match(
+    html,
+    /<td><span class="note-inline-color" style="--note-color:#112233">参考定义<\/span><\/td>/,
+  );
+  assert.match(html, /class="katex"/);
+  assert.match(html, /&lt;span[^\n]+background: url\(unsafe\)/);
+  assert.match(html, /<code>&lt;span/);
+  assert.match(
+    html,
+    /所以<strong class="note-inline-color" style="--note-color:#b56a28">正确符号和 <span class="katex">/,
+  );
+  assert.match(
+    html,
+    /note-inline-color"[^>]+><strong>蓝色结论<\/strong><\/span>/,
+  );
+  assert.match(html, /&lt;strong[^\n]+未知色值&lt;\/strong&gt;/);
+  assert.equal([...html.matchAll(/class="note-inline-color"/g)].length, 4);
+});
+
+test("the live editor marks only the formatted text and keeps navigation labels plain", () => {
+  const colored = '<span style="color: #2a5f9a">假设</span>';
+  const bold =
+    '<strong style="color: var(--color-orange, #B56A28)">新结论</strong>';
+  const doc = "前文\n## " + colored + "\n## " + bold + "\n`" + colored + "`";
+  const { state, field } = fixture(doc);
+  const marks = entries(state.field(field).decorations).filter(
+    (entry) => entry.decoration.spec.class === "note-inline-color",
+  );
+  assert.equal(marks.length, 2);
+  assert.equal(doc.slice(marks[0].from, marks[0].to), "假设");
+  assert.match(marks[0].decoration.spec.attributes.style, /#2a5f9a/);
+  assert.equal(doc.slice(marks[1].from, marks[1].to), "新结论");
+  assert.equal(marks[1].decoration.spec.tagName, "strong");
+  assert.match(marks[1].decoration.spec.attributes.style, /#b56a28/);
+  assert.equal(noteOutline(doc)[0].title, "假设");
+  assert.equal(noteOutline(doc)[1].title, "新结论");
+  assert.equal(noteTitle("# " + colored, {}, "synthetic.md"), "假设");
+  assert.equal(noteTitle("# " + bold, {}, "synthetic.md"), "新结论");
+});
+
+test("changing part of a colored phrase keeps the surrounding colors and tolerates resetting it", () => {
+  const source = '<span style="color: #a43f34">前中后</span>';
+  const from = source.indexOf("中");
+  const state = EditorState.create({
+    doc: source,
+    selection: { anchor: from, head: from + 1 },
+  });
+  const blue = state.update(editNoteColor(state, "#2a5f9a")!).state;
+  assert.deepEqual(
+    noteInlineSpans(blue.doc.toString()).map(({ open }) => open.color),
+    ["#a43f34", "#2a5f9a", "#a43f34"],
+  );
+  const reset = blue.update(editNoteColor(blue, null)!).state.doc.toString();
+  assert.equal(
+    reset,
+    '<span style="color: #a43f34">前</span>中<span style="color: #a43f34">后</span>',
+  );
+});
+
+test("recoloring part of an HTML strong phrase preserves its emphasis and adjacent colors", () => {
+  const source =
+    '所以<strong style="color: var(--color-orange, #B56A28)">前中后</strong>。';
+  const from = source.indexOf("中");
+  const state = EditorState.create({
+    doc: source,
+    selection: { anchor: from, head: from + 1 },
+  });
+  const blue = state.update(editNoteColor(state, "#2a5f9a")!).state;
+  assert.equal(
+    blue.doc.toString(),
+    '所以<strong><span style="color: #b56a28">前</span><span style="color: #2a5f9a">中</span><span style="color: #b56a28">后</span></strong>。',
+  );
+  const reset = blue.update(editNoteColor(blue, null)!).state.doc.toString();
+  assert.equal(
+    reset,
+    '所以<strong><span style="color: #b56a28">前</span>中<span style="color: #b56a28">后</span></strong>。',
+  );
+});
+
+test("applying a color leaves heading and list syntax, formulas, and code intact", () => {
+  const source = "## 读**结论**接下文\n- 使用 $x^2$ 与 `const`\n\n$$x^2$$";
+  const state = EditorState.create({
+    doc: source,
+    selection: { anchor: 0, head: source.length },
+  });
+  const changed = state
+    .update(editNoteColor(state, "#2c6b50")!)
+    .state.doc.toString();
+  assert.match(changed, /^## <span /);
+  assert.match(changed, /\n- <span /);
+  assert.match(changed, /\$x\^2\$/);
+  assert.match(changed, /\n\$\$x\^2\$\$$/);
+  const html = renderMarkdown(changed, "synthetic.md");
+  assert.match(html, /<strong>结论<\/strong>/);
+  assert.match(html, /<code>const<\/code>/);
+  assert.match(html, /katex-display/);
+});
 
 test("preview reuses document data for no-op, effects, same-line and distant selections", (t) => {
   const { state, field, calls } = fixture(
@@ -127,7 +253,14 @@ test("block preview reveals the whole intersected block, including endpoints", (
   const direct = state.facet(EditorView.decorations);
   assert.equal(direct.length, 1);
   assert.equal(direct[0], original.decorations);
-  assert.ok(widgets(original).every((entry) => entry.decoration.spec.block));
+  assert.ok(
+    widgets(original)
+      .slice(0, -1)
+      .every((entry) => entry.decoration.spec.block),
+  );
+  const image = widgets(original).at(-1)!;
+  assert.equal(image.decoration.spec.widget.layout, "image");
+  assert.ok(!image.decoration.spec.block);
 
   for (const candidate of original.candidates) {
     for (const anchor of [
@@ -219,6 +352,42 @@ test("selection overlap changes touch only the symmetric difference and merge ca
       (entry) => entry.from >= lines[2].from && entry.to <= lines[2].to,
     ),
   );
+});
+
+test("mouse selection keeps the rendered layout until the user finishes with a caret", () => {
+  const { state, field, calls } = fixture(
+    '前文\n正文 <span style="color: #a43f34">颜色</span> **加粗**\n$x^2$\n末尾',
+  );
+  const original = state.field(field);
+  const anchor = state.doc.toString().indexOf("颜色");
+  const pressed = state.update({
+    selection: { anchor },
+    userEvent: "select.pointer",
+  }).state;
+  assert.equal(pressed.field(field), original);
+  const dragging = pressed.update({
+    selection: { anchor, head: state.doc.line(3).to },
+    userEvent: "select.pointer",
+  }).state;
+  assert.equal(dragging.field(field), original);
+  const released = dragging.update({
+    effects: finishPreviewPointerSelection.of(null),
+  }).state;
+  assert.equal(released.field(field), original);
+
+  const caret = released.update({
+    selection: { anchor },
+    userEvent: "select.pointer",
+  }).state;
+  assert.equal(caret.field(field), original);
+  const clicked = caret
+    .update({
+      effects: finishPreviewPointerSelection.of(null),
+    })
+    .state.field(field);
+  assert.deepEqual(clicked.revealed, [{ from: 0, to: 1 }]);
+  assert.equal(clicked.candidates, original.candidates);
+  assert.deepEqual(calls, { markdown: 0, math: 1 });
 });
 
 test("edits invalidate rendered candidates and respect automatically mapped selection and widget offsets", () => {

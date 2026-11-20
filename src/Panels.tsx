@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -8,6 +15,7 @@ import {
   FilePlus2,
   ImagePlus,
   Layers3,
+  MessageSquare,
   Play,
   RefreshCw,
   ScanLine,
@@ -17,14 +25,27 @@ import {
   X,
 } from "lucide-react";
 import { CaptureTrash } from "./CaptureTrash";
+import { CodexConversation, type ReviewMessage } from "./CodexConversation";
+import { ReviewDivider } from "./ReviewDivider";
+import { CodexOptionsFields, CodexOptionsSummary } from "./CodexOptions";
+import {
+  defaultCodexOptions,
+  type CodexOptions,
+  type CodexCatalog,
+} from "../shared/codex-options";
 import { diffLines } from "diff";
 import type {
+  BatchExecutor,
   BatchPreview,
   Capture,
+  ChildNoteDraft,
+  CodexCliStatus,
+  CodexReviewAnchor,
   Job,
   NoteSummary,
   Proposal,
 } from "../shared/contracts";
+import { codexRootJob, maxRevisionComments } from "../shared/contracts";
 import {
   GENERAL_PROFILE,
   RESEARCH_FOCUS,
@@ -36,6 +57,7 @@ import {
 import { researchChecks } from "../shared/research-checks";
 import {
   api,
+  type ApiError,
   fileData,
   openExternal,
   prettyState,
@@ -43,7 +65,16 @@ import {
   nativeAction,
 } from "./client";
 import { assetUrl } from "./markdown";
-import { Editor } from "./Editor";
+import { Editor, type EditorHandle } from "./Editor";
+import { NoteColorMenu } from "./NoteColorMenu";
+import {
+  type ReviewFeedback,
+  emptyReviewFeedback,
+  readReviewFeedback,
+  writeReviewFeedback,
+  enqueueOpinion,
+} from "./review-feedback";
+import { noteOutline } from "../shared/note-outline";
 import { MaterialContent, SnapshotText } from "./MaterialContent";
 import {
   filterMaterials,
@@ -67,18 +98,22 @@ export function Modal({
   onClose,
   wide = false,
   fallbackFocus,
+  initialFocus,
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
   wide?: boolean;
   fallbackFocus?: () => void;
+  initialFocus?: string;
 }) {
   const panel = useRef<HTMLElement>(null);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement;
     panel.current
-      ?.querySelector<HTMLElement>("input,textarea,select,button")
+      ?.querySelector<HTMLElement>(
+        initialFocus || "input,textarea,select,button",
+      )
       ?.focus();
     return () => {
       if (
@@ -163,6 +198,55 @@ type Common = {
   refresh: () => Promise<void>;
 };
 
+const executorLabels: Record<BatchExecutor, string> = {
+  "codex-cli": "本机 Codex CLI",
+  api: "模型 API",
+  codex: "Codex 对话",
+};
+export const codexCliLabels: Record<CodexCliStatus | "checking", string> = {
+  checking: "正在检查本机 Codex CLI…",
+  ready: "已检测到本机 Codex CLI 登录。",
+  missing: "未找到本机 Codex CLI。可安装并登录，或改用模型 API。",
+  "signed-out": "本机 Codex CLI 尚未登录。可先登录，或改用模型 API。",
+  unavailable: "暂时无法确认本机 Codex CLI 登录。可重试，或改用模型 API。",
+};
+export function useCodexCliStatus(enabled: boolean, includeCatalog = false) {
+  const [connection, setConnection] = useState<{
+    status: CodexCliStatus | "checking";
+    catalog?: CodexCatalog;
+    defaults?: CodexOptions;
+  }>({ status: "checking" });
+  const [check, setCheck] = useState(0);
+  useEffect(() => {
+    if (!enabled) return;
+    let current = true;
+    setConnection((previous) => ({ ...previous, status: "checking" }));
+    void api<typeof connection>(
+      "GET",
+      "/settings/codex-cli" + (includeCatalog ? "?catalog=1" : ""),
+    )
+      .then((result) => {
+        if (current) setConnection(result);
+      })
+      .catch(() => {
+        if (current)
+          setConnection((previous) => ({ ...previous, status: "unavailable" }));
+      });
+    return () => {
+      current = false;
+    };
+  }, [enabled, includeCatalog, check]);
+  return {
+    state: connection.status,
+    catalog: connection.catalog,
+    defaults:
+      connection.defaults ??
+      connection.catalog?.defaults ??
+      defaultCodexOptions,
+    recheck: () => setCheck((value) => value + 1),
+  };
+}
+
 export function Inbox({
   taskId,
   registerGuard,
@@ -195,7 +279,9 @@ export function Inbox({
       initial ? "已恢复本机草稿，尚未写入知识库" : "原始想法会随材料保留。",
     ),
     [batch, setBatch] = useState(false),
-    [executor, setExecutor] = useState<"api" | "codex">("codex"),
+    [executor, setExecutor] = useState<BatchExecutor>(
+      capabilities.codexCli ? "codex-cli" : "codex",
+    ),
     [researchSelection, setResearchSelection] =
       useState<ResearchSelection>(GENERAL_PROFILE),
     [preview, setPreview] = useState<BatchPreview | null>(null),
@@ -203,6 +289,9 @@ export function Inbox({
     [references, setReferences] = useState<string[]>([]),
     [busy, setBusy] = useState(false);
   const [deleteTargets, setDeleteTargets] = useState<Capture[]>([]);
+  const cli = useCodexCliStatus(batch && capabilities.codexCli, true);
+  const [pickedCodex, setPickedCodex] = useState<CodexOptions>();
+  const codexOptions = pickedCodex ?? cli.defaults;
   useEffect(() => {
     const ids = new Set(captures.map((c) => c.id));
     setSelected((previous) => previous.filter((id) => ids.has(id)));
@@ -228,6 +317,7 @@ export function Inbox({
     selected,
     references,
     executor,
+    codexOptions: executor === "codex-cli" ? codexOptions : undefined,
     instruction,
     researchSelection,
   });
@@ -431,6 +521,7 @@ export function Inbox({
         sourceIds: selected,
         referencePaths: references,
         executor,
+        codexOptions: executor === "codex-cli" ? codexOptions : undefined,
         instruction,
         researchSelection,
       });
@@ -452,18 +543,19 @@ export function Inbox({
         sourceIds: selected,
         referencePaths: references,
         executor,
+        codexOptions: executor === "codex-cli" ? codexOptions : undefined,
         instruction,
         researchSelection,
         expectedPreviewHash: preview.previewHash,
       });
-      if (executor === "api") await api("POST", `/jobs/${job.id}/run`);
+      if (executor !== "codex") await api("POST", `/jobs/${job.id}/run`);
       setBatch(false);
       setSelected([]);
       await refresh();
       notify(
-        executor === "api"
-          ? "整理任务已启动"
-          : "批次已共享，请到 Codex 发起整理",
+        executor === "codex"
+          ? "批次已共享，请到 Codex 发起整理"
+          : `已通过${executorLabels[executor]}启动整理`,
       );
     } catch (e) {
       setPreview(null);
@@ -503,7 +595,11 @@ export function Inbox({
         </div>
         <button
           className="primary"
-          onClick={() => setBatch(true)}
+          onClick={() => {
+            setExecutor(capabilities.codexCli ? "codex-cli" : "codex");
+            setPickedCodex(undefined);
+            setBatch(true);
+          }}
           disabled={!selected.length}
         >
           <Sparkles size={16} />
@@ -795,7 +891,7 @@ export function Inbox({
                   </span>
                   <strong>
                     {j.snapshot.sources.length} 份材料 ·{" "}
-                    {j.executor === "api" ? "模型接口" : "Codex"}
+                    {executorLabels[j.executor]}
                   </strong>
                   <small>
                     {shortDate(j.createdAt)} ·{" "}
@@ -856,7 +952,7 @@ export function Inbox({
                       onClick={() =>
                         void api(
                           "POST",
-                          `/jobs/${j.id}/${j.executor === "api" ? "run" : "share"}`,
+                          `/jobs/${j.id}/${j.executor === "codex" ? "share" : "run"}`,
                         )
                           .then(refresh)
                           .catch((e) => notify(e.message, true))
@@ -906,12 +1002,33 @@ export function Inbox({
             <select
               value={executor}
               disabled={busy}
-              onChange={(e) => setExecutor(e.target.value as "api" | "codex")}
+              onChange={(e) => setExecutor(e.target.value as BatchExecutor)}
             >
-              <option value="api">软件内调用模型 API</option>
+              {capabilities.codexCli && (
+                <option value="codex-cli">本机 Codex CLI（首选）</option>
+              )}
+              <option value="api">模型 API（备用）</option>
               <option value="codex">在 Codex 对话中发起</option>
             </select>
           </label>
+          {executor === "codex-cli" && (
+            <>
+              <CodexOptionsFields
+                catalog={cli.catalog}
+                value={codexOptions}
+                disabled={busy || cli.state === "checking"}
+                onChange={setPickedCodex}
+              />
+              <div className="executor-status">
+                <span role="status">{codexCliLabels[cli.state]}</span>
+                {cli.state !== "checking" && cli.state !== "ready" && (
+                  <button className="secondary" onClick={cli.recheck}>
+                    重新检查
+                  </button>
+                )}
+              </div>
+            </>
+          )}
           <label>
             整理配置
             <select
@@ -1006,6 +1123,12 @@ export function Inbox({
                 {preview.sources.length} 份材料 · {preview.references.length}{" "}
                 篇参考笔记
               </p>
+              {preview.codexOptions && (
+                <CodexOptionsSummary
+                  value={preview.codexOptions}
+                  catalog={cli.catalog}
+                />
+              )}
               <p className="muted">
                 只交付下方快照和所列图片。预览不会发送给模型；结果仍需你审核。任何输入变化都需重新预览。
               </p>
@@ -1045,15 +1168,19 @@ export function Inbox({
             <button
               className="primary"
               onClick={() => void (preview ? start() : preparePreview())}
-              disabled={busy}
+              disabled={
+                busy || (executor === "codex-cli" && cli.state !== "ready")
+              }
             >
               {busy
                 ? "正在准备…"
                 : !preview
                   ? "预览交付内容"
-                  : executor === "api"
-                    ? "确认发送并生成草稿"
-                    : "确认共享给 Codex"}
+                  : executor === "codex"
+                    ? "确认共享给 Codex"
+                    : executor === "codex-cli"
+                      ? "交给本机 Codex 整理"
+                      : "确认发送并生成草稿"}
             </button>
           </footer>
         </Modal>
@@ -1095,6 +1222,7 @@ export function Review({
   proposals,
   jobs,
   onOpen,
+  saveTarget,
   notify,
   refresh,
 }: {
@@ -1102,12 +1230,13 @@ export function Review({
   proposals: Proposal[];
   jobs: Job[];
   onOpen: (path: string) => Promise<void>;
+  saveTarget: (path: string) => Promise<void>;
 } & Common) {
   const [id, setId] = useState(""),
     [text, setText] = useState(""),
     [before, setBefore] = useState(""),
     [targetHash, setTargetHash] = useState(""),
-    [diff, setDiff] = useState(false),
+    [diff, setDiff] = useState<"original" | "previous" | null>(null),
     [busy, setBusy] = useState(false);
   const editing = useRef<{
       id: string;
@@ -1118,11 +1247,124 @@ export function Review({
     saving = useRef<Promise<void> | null>(null),
     saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const locked = useRef(false);
+  const [conversation, setConversation] = useState(false);
+  const [showChat, setShowChat] = useState(true);
+  const [showSources, setShowSources] = useState(false);
+  const [narrowChat, setNarrowChat] = useState(false);
+  const reviewChatId = useId();
+  const [feedbackByDraft, setFeedbackByDraft] = useState<
+    Record<string, ReviewFeedback>
+  >({});
+  const compareOnOpen = useRef("");
+  const [childPreview, setChildPreview] = useState<ChildNoteDraft | null>(null);
+  const reviewEditor = useRef<EditorHandle>(null);
+  const reviewOutline = useMemo(
+    () => noteOutline(text).filter((heading) => heading.level > 1),
+    [text],
+  );
   const reviewKey = (id: string) => recoveryKey(vaultId, "review", id);
-  const pending = proposals.filter((p) => p.status === "pending"),
-    proposal = pending.find((p) => p.id === id) || pending[0],
+  const pending = proposals.filter(
+      (p) => p.status === "pending" && !p.supersededBy,
+    ),
+    proposal =
+      proposals.find((p) => p.id === id && p.status === "pending") ||
+      pending[0],
     job = jobs.find((j) => j.id === proposal?.jobId);
   const evidence = proposal ? reviewEvidence(proposal, job) : null;
+  const revision = job?.snapshot.noteRevision;
+  const previous = job?.snapshot.codexFollowUp?.base;
+  const inlineChat = job?.executor === "codex-cli";
+  const expandedChat = inlineChat && showChat;
+  const cli = useCodexCliStatus(expandedChat, true);
+  const lockedDraft = Boolean(
+    proposal?.unavailable || proposal?.revising || proposal?.supersededBy,
+  );
+  const canContinue = inlineChat && !lockedDraft;
+  const baseChanged = Boolean(
+    proposal?.targetPath && targetHash && targetHash !== proposal.baseHash,
+  );
+  const feedbackKey = proposal
+    ? "kwb-codex-feedback:" + vaultId + ":" + proposal.id
+    : "";
+  const savedFeedback = useMemo(
+    () => (feedbackKey ? readReviewFeedback(feedbackKey) : emptyReviewFeedback),
+    [feedbackKey],
+  );
+  const reviewFeedback = feedbackByDraft[feedbackKey] ?? savedFeedback;
+  function updateFeedback(value: ReviewFeedback) {
+    if (!feedbackKey) return;
+    setFeedbackByDraft((previous) => ({ ...previous, [feedbackKey]: value }));
+    writeReviewFeedback(feedbackKey, value);
+  }
+  const optimizationJobs = jobs.filter(
+    (item) =>
+      item.snapshot.noteRevision &&
+      !item.snapshot.codexFollowUp?.mode &&
+      ["queued", "running", "paused", "failed"].includes(item.state),
+  );
+  function describeDraft(draftId: string) {
+    const draft = proposals.find(
+      (entry) =>
+        entry.id === draftId &&
+        entry.status === "pending" &&
+        !entry.unavailable,
+    );
+    if (!draft) return;
+    let version = 1;
+    let ancestor = draft;
+    const seen = new Set([draftId]);
+    for (;;) {
+      const baseId = jobs.find((item) => item.id === ancestor.jobId)?.snapshot
+        .codexFollowUp?.proposalId;
+      if (!baseId || seen.has(baseId)) break;
+      version++;
+      const parent = proposals.find((entry) => entry.id === baseId);
+      if (!parent) break;
+      seen.add(baseId);
+      ancestor = parent;
+    }
+    return draft.title + " · 第 " + version + " 版";
+  }
+  function openDraft(draftId: string, compare = false) {
+    if (locked.current) return;
+    void persist()
+      .then(() => {
+        if (draftId === proposal?.id && compare && previous)
+          setDiff("previous");
+        else {
+          compareOnOpen.current = compare ? draftId : "";
+          setId(draftId);
+        }
+        setNarrowChat(false);
+      })
+      .catch((e) => notify(e.message, true));
+  }
+  function quoteDraft(value?: CodexReviewAnchor) {
+    if (!proposal || !canContinue || locked.current) return;
+    if (!value) {
+      notify("请先选中要引用的段落。", true);
+      return;
+    }
+    const current = reviewFeedback.anchor;
+    const switching =
+      current &&
+      (current.offset !== value.offset || current.text !== value.text);
+    if (
+      switching &&
+      reviewFeedback.instruction.trim() &&
+      reviewFeedback.editing === undefined
+    ) {
+      if (reviewFeedback.comments.length >= maxRevisionComments) {
+        notify("请先提交已记录的意见，再添加新的引用。", true);
+        return;
+      }
+      updateFeedback({ ...enqueueOpinion(reviewFeedback), anchor: value });
+    } else {
+      updateFeedback({ ...reviewFeedback, anchor: value });
+    }
+    setShowChat(true);
+    setNarrowChat(true);
+  }
   async function openReviewNote(path: string) {
     if (locked.current) return;
     locked.current = true;
@@ -1195,6 +1437,7 @@ export function Review({
   }
   useEffect(() => {
     let current = true;
+    if (proposal) setId(proposal.id);
     const local =
       proposal &&
       readRecovery<{ text: string; hash: string }>(reviewKey(proposal.id));
@@ -1208,14 +1451,23 @@ export function Review({
           dirty: Boolean(local || proposal.recovery),
         }
       : null;
-    setDiff(false);
+    setDiff(
+      proposal?.id === compareOnOpen.current && previous ? "previous" : null,
+    );
+    compareOnOpen.current = "";
     setBefore("");
     setTargetHash("");
     if (proposal?.targetPath)
       void api("GET", "/note?path=" + encodeURIComponent(proposal.targetPath))
         .then((n) => {
           if (!current) return;
-          setBefore(n.owner === "paperdesk" ? n.body : n.content);
+          setBefore(
+            revision
+              ? (n.body || "").replace(/\r\n/g, "\n")
+              : n.owner === "paperdesk"
+                ? n.body
+                : n.content,
+          );
           setTargetHash(n.hash);
         })
         .catch((e) => {
@@ -1242,6 +1494,28 @@ export function Review({
       );
     };
   }, []);
+  async function compareOriginal() {
+    if (!proposal?.targetPath) return;
+    try {
+      const target = await api(
+        "GET",
+        "/note?path=" + encodeURIComponent(proposal.targetPath),
+      );
+      if (editing.current?.id !== proposal.id) return;
+      setBefore(
+        revision
+          ? (target.body || "").replace(/\r\n/g, "\n")
+          : target.owner === "paperdesk"
+            ? target.body
+            : target.content,
+      );
+      setTargetHash(target.hash);
+      setDiff("original");
+      setNarrowChat(false);
+    } catch (e) {
+      notify((e as Error).message, true);
+    }
+  }
   const rebase = async () => {
     if (!proposal || locked.current) return;
     locked.current = true;
@@ -1255,9 +1529,10 @@ export function Review({
       );
       if (editing.current) editing.current.hash = result.draftHash;
       await refresh();
-      notify("修订基准已更新，请继续核对正文后确认保存。");
+      notify("已确认原笔记的当前版本。");
     } catch (e) {
       notify((e as Error).message, true);
+      if ((e as ApiError).code === "VERSION_CONFLICT") await compareOriginal();
     } finally {
       locked.current = false;
       setBusy(false);
@@ -1269,6 +1544,8 @@ export function Review({
     setBusy(true);
     try {
       await persist();
+      if (!proposal.sourceIds.length && proposal.targetPath)
+        await saveTarget(proposal.targetPath);
       const saved = await api("POST", `/proposals/${proposal.id}/accept`, {
         markdown: editing.current?.text,
         expectedHash: editing.current?.hash,
@@ -1278,6 +1555,25 @@ export function Review({
       await onOpen(saved.path);
     } catch (e) {
       notify((e as Error).message, true);
+      if (proposal.targetPath && (e as ApiError).code === "VERSION_CONFLICT")
+        await compareOriginal();
+    } finally {
+      locked.current = false;
+      setBusy(false);
+    }
+  };
+  const continueDraft = async (message: ReviewMessage) => {
+    if (!proposal || !canContinue || locked.current)
+      throw new Error("当前稿件暂时无法交给 Codex。");
+    locked.current = true;
+    setBusy(true);
+    try {
+      await persist();
+      await api<Job>("POST", "/proposals/" + proposal.id + "/continue", {
+        ...message,
+        expectedHash: editing.current?.hash,
+      });
+      void refresh().catch(() => {});
     } finally {
       locked.current = false;
       setBusy(false);
@@ -1291,8 +1587,53 @@ export function Review({
           <h1>让结论，有据可循。</h1>
           <p>对照原始材料，保留你认可的部分，再放入知识库。</p>
         </div>
-        <span className="count-badge">{pending.length} 份待审</span>
+        <div className="review-heading-actions">
+          {jobs.some((item) => item.executor === "codex-cli") && (
+            <button
+              className="secondary"
+              disabled={busy}
+              onClick={() => setConversation(true)}
+            >
+              Codex 对话记录
+            </button>
+          )}
+          <span className="count-badge">{pending.length} 份待审</span>
+        </div>
       </div>
+      {optimizationJobs.length > 0 && (
+        <section className="optimization-jobs" aria-label="笔记优化任务">
+          <div className="section-label">笔记优化任务</div>
+          <div className="jobs">
+            {optimizationJobs.map((item) => (
+              <article key={item.id}>
+                <div>
+                  <span className={"state state-" + item.state}>
+                    {prettyState(item.state)}
+                  </span>
+                  <strong>{item.snapshot.noteRevision?.title}</strong>
+                  {item.snapshot.codexOptions && (
+                    <CodexOptionsSummary value={item.snapshot.codexOptions} />
+                  )}
+                  {item.error && <p className="error-text">{item.error}</p>}
+                </div>
+                <button
+                  className="secondary"
+                  onClick={() => {
+                    void api(
+                      "POST",
+                      `/jobs/${item.id}/${item.state === "running" ? "pause" : "run"}`,
+                    )
+                      .then(refresh)
+                      .catch((e) => notify(e.message, true));
+                  }}
+                >
+                  {item.state === "running" ? "暂停" : "继续优化"}
+                </button>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
       {!proposal ? (
         <div className="empty">
           <Check size={38} strokeWidth={1} />
@@ -1307,11 +1648,7 @@ export function Review({
                 key={p.id}
                 disabled={busy}
                 aria-pressed={p.id === proposal.id}
-                onClick={() => {
-                  void persist()
-                    .then(() => setId(p.id))
-                    .catch((e) => notify(e.message, true));
-                }}
+                onClick={() => openDraft(p.id)}
               >
                 {p.title}
                 <small>{p.action === "amend" ? "修订" : "新建"}</small>
@@ -1323,131 +1660,328 @@ export function Review({
               {proposal.unavailable}
             </p>
           )}
-          <div className="review-grid">
+          {expandedChat && (
+            <div className="review-narrow-tabs" aria-label="审稿视图">
+              <button
+                className="secondary"
+                aria-pressed={!narrowChat}
+                onClick={() => setNarrowChat(false)}
+              >
+                稿件
+              </button>
+              <button
+                className="secondary"
+                aria-pressed={narrowChat}
+                onClick={() => setNarrowChat(true)}
+              >
+                Codex 对话
+              </button>
+            </div>
+          )}
+          <div
+            className={
+              "review-grid" +
+              (expandedChat ? " review-grid-chat" : "") +
+              (narrowChat ? " review-show-chat" : "")
+            }
+          >
             <aside className="source-review">
-              <p className="muted">
-                {researchProfileLabel(job?.snapshot.researchProfile)}
-              </p>
-              <div className="review-evidence-summary">
-                <strong>审核依据</strong>
-                <p>
-                  {evidence?.sources.length} 份原始材料 ·{" "}
-                  {evidence?.references.length} 篇参考笔记 ·{" "}
-                  {proposal.unresolved.length} 项待核对
-                </p>
-                <small>
-                  以下正文为整理时的固定快照；打开笔记查看当前版本。图片按原附件路径读取。
-                </small>
-              </div>
-              {Boolean(evidence?.missing.length) && (
-                <p role="alert" className="error-text">
-                  有 {evidence?.missing.length}{" "}
-                  份来源快照缺失，请先核对来源再接受草稿。
-                </p>
-              )}
-              <h3>原始材料</h3>
-              {evidence?.sources.map((source, index) => (
-                <details
-                  className="evidence-item"
-                  key={`${proposal.id}:${source.id}`}
-                  open
+              {expandedChat && (
+                <button
+                  className="text-button review-sources-toggle"
+                  type="button"
+                  aria-expanded={showSources}
+                  onClick={() => setShowSources((value) => !value)}
                 >
-                  <summary>
-                    <span>
-                      {index + 1}. {source.ref.title}
-                    </span>
-                    <small>{materialKindLabel(source.ref.kind)}</small>
-                  </summary>
-                  <MaterialContent capture={source} />
-                  <button
-                    className="text-button"
-                    disabled={busy}
-                    onClick={() => void openReviewNote(source.path)}
-                  >
-                    打开当前材料笔记 <ArrowUpRight size={13} />
-                  </button>
-                </details>
-              ))}
-              {Boolean(evidence?.references.length) && (
-                <>
-                  <h3>参考笔记快照</h3>
-                  {evidence?.references.map((reference) => (
-                    <details
-                      className="evidence-item"
-                      key={`${proposal.id}:${reference.path}`}
-                    >
-                      <summary>{reference.title}</summary>
-                      <p className="material-path">{reference.path}</p>
-                      <SnapshotText
-                        text={reference.content}
-                        path={reference.path}
-                      />
-                      <button
-                        className="text-button"
-                        disabled={busy}
-                        onClick={() => void openReviewNote(reference.path)}
-                      >
-                        打开当前参考笔记 <ArrowUpRight size={13} />
-                      </button>
-                    </details>
-                  ))}
-                </>
+                  {showSources ? "收起审核依据" : "展开审核依据"}
+                </button>
               )}
-              {proposal.unresolved.length > 0 && (
-                <div className="uncertainties">
-                  <strong>待核对</strong>
-                  <ul>
-                    {proposal.unresolved.map((u, i) => (
-                      <li key={i}>{u}</li>
-                    ))}
-                  </ul>
+              <div hidden={expandedChat && !showSources}>
+                <p className="muted">
+                  {researchProfileLabel(job?.snapshot.researchProfile)}
+                </p>
+                <div className="review-evidence-summary">
+                  <strong>审核依据</strong>
+                  {job?.snapshot.codexOptions && (
+                    <CodexOptionsSummary value={job.snapshot.codexOptions} />
+                  )}
+                  <p>
+                    {revision
+                      ? "原笔记快照"
+                      : `${evidence?.sources.length} 份原始材料`}{" "}
+                    · {evidence?.references.length} 篇参考笔记 ·{" "}
+                    {proposal.unresolved.length} 项待核对
+                  </p>
+                  <small>
+                    以下正文为整理时的固定快照；打开笔记查看当前版本。图片按原附件路径读取。
+                  </small>
                 </div>
-              )}
-              <ResearchHints
-                profile={job?.snapshot.researchProfile}
-                text={text}
-              />
+                {Boolean(evidence?.missing.length) && (
+                  <p role="alert" className="error-text">
+                    有 {evidence?.missing.length}{" "}
+                    份来源快照缺失，请先核对来源再接受草稿。
+                  </p>
+                )}
+                {revision ? (
+                  <details className="evidence-item">
+                    <summary>原笔记 · {revision.title}</summary>
+                    <p className="material-path">{revision.path}</p>
+                    <SnapshotText
+                      text={revision.content}
+                      path={revision.path}
+                    />
+                    <button
+                      className="text-button"
+                      disabled={busy}
+                      onClick={() => void openReviewNote(revision.path)}
+                    >
+                      打开当前笔记 <ArrowUpRight size={13} />
+                    </button>
+                  </details>
+                ) : (
+                  <h3>原始材料</h3>
+                )}
+                {evidence?.sources.map((source, index) => (
+                  <details
+                    className="evidence-item"
+                    key={`${proposal.id}:${source.id}`}
+                    open
+                  >
+                    <summary>
+                      <span>
+                        {index + 1}. {source.ref.title}
+                      </span>
+                      <small>{materialKindLabel(source.ref.kind)}</small>
+                    </summary>
+                    <MaterialContent capture={source} />
+                    <button
+                      className="text-button"
+                      disabled={busy}
+                      onClick={() => void openReviewNote(source.path)}
+                    >
+                      打开当前材料笔记 <ArrowUpRight size={13} />
+                    </button>
+                  </details>
+                ))}
+                {Boolean(evidence?.references.length) && (
+                  <>
+                    <h3>参考笔记快照</h3>
+                    {evidence?.references.map((reference) => (
+                      <details
+                        className="evidence-item"
+                        key={`${proposal.id}:${reference.path}`}
+                      >
+                        <summary>{reference.title}</summary>
+                        <p className="material-path">{reference.path}</p>
+                        <SnapshotText
+                          text={reference.content}
+                          path={reference.path}
+                        />
+                        <button
+                          className="text-button"
+                          disabled={busy}
+                          onClick={() => void openReviewNote(reference.path)}
+                        >
+                          打开当前参考笔记 <ArrowUpRight size={13} />
+                        </button>
+                      </details>
+                    ))}
+                  </>
+                )}
+                {revision && Boolean(proposal.annotationResponses?.length) && (
+                  <details className="evidence-item" open>
+                    <summary>
+                      批注回应（{proposal.annotationResponses!.length}）
+                    </summary>
+                    <ol className="annotation-preview">
+                      {proposal.annotationResponses!.map((item) => (
+                        <li key={item.line}>
+                          <small>
+                            正文第 {item.line} 行 ·{" "}
+                            {item.state === "answered" ? "已回答" : "需补条件"}
+                          </small>
+                          <p>
+                            {
+                              revision.annotations?.find(
+                                (annotation) => annotation.line === item.line,
+                              )?.text
+                            }
+                          </p>
+                          <SnapshotText
+                            text={item.response}
+                            path={revision.path}
+                          />
+                        </li>
+                      ))}
+                    </ol>
+                  </details>
+                )}
+                {Boolean(proposal.childNotes?.length) && (
+                  <section
+                    className="review-child-notes"
+                    aria-label="将创建的子笔记"
+                  >
+                    <h3>将创建的子笔记</h3>
+                    <ul>
+                      {proposal.childNotes!.map((child) => (
+                        <li key={child.key}>
+                          <button
+                            className="text-button"
+                            onClick={() => setChildPreview(child)}
+                          >
+                            {child.title} <ArrowUpRight size={13} />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                    <small>确认保存时生成独立笔记并连接正文。</small>
+                  </section>
+                )}
+                {!diff && reviewOutline.length > 0 && (
+                  <details className="evidence-item">
+                    <summary>当前稿目录</summary>
+                    {reviewOutline.map(({ title, level, offset }) => (
+                      <button
+                        key={offset}
+                        className="outline-link"
+                        style={{ paddingLeft: (level - 2) * 10 }}
+                        onClick={() => reviewEditor.current?.goTo(offset)}
+                      >
+                        {title}
+                      </button>
+                    ))}
+                  </details>
+                )}
+                {proposal.unresolved.length > 0 && (
+                  <div className="uncertainties">
+                    <strong>待核对</strong>
+                    <ul>
+                      {proposal.unresolved.map((u, i) => (
+                        <li key={i}>{u}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                <ResearchHints
+                  profile={job?.snapshot.researchProfile}
+                  text={text}
+                />
+              </div>
             </aside>
             <section className="proposal-editor">
               <header>
                 <span>{proposal.title}</span>
-                {proposal.action === "amend" && (
-                  <button
-                    className="text-button"
-                    onClick={() => setDiff((d) => !d)}
-                  >
-                    {diff ? "继续编辑" : "查看修改差异"}
-                  </button>
-                )}
+                <div className="review-draft-controls">
+                  {!diff && !busy && !lockedDraft && (
+                    <NoteColorMenu
+                      onSelect={(color) => {
+                        if (!reviewEditor.current?.setTextColor(color))
+                          notify("请选中要设置颜色的正文。", true);
+                      }}
+                    />
+                  )}
+                  {proposal.supersededBy && (
+                    <button
+                      className="text-button"
+                      onClick={() => openDraft(proposal.supersededBy!, true)}
+                    >
+                      查看新版
+                    </button>
+                  )}
+                  {inlineChat && !showChat && (
+                    <button
+                      className="text-button"
+                      onClick={() => setShowChat(true)}
+                    >
+                      <MessageSquare size={14} /> Codex 对话
+                    </button>
+                  )}
+                  {canContinue && !diff && (
+                    <button
+                      className="text-button"
+                      disabled={busy}
+                      onClick={() =>
+                        quoteDraft(reviewEditor.current?.getQuote())
+                      }
+                    >
+                      引用选中段落
+                    </button>
+                  )}
+                  {previous && (
+                    <button
+                      className="text-button"
+                      onClick={() =>
+                        setDiff(diff === "previous" ? null : "previous")
+                      }
+                    >
+                      {diff === "previous" ? "返回新版正文" : "对照上一版"}
+                    </button>
+                  )}
+                  {proposal.action === "amend" && (
+                    <button
+                      className="text-button"
+                      onClick={() => {
+                        if (diff === "original") setDiff(null);
+                        else void compareOriginal();
+                      }}
+                    >
+                      {diff === "original" ? "返回正文" : "对照原笔记"}
+                    </button>
+                  )}
+                </div>
               </header>
               {diff ? (
                 <>
-                  <Diff before={before} after={text} />
-                  {proposal.action === "amend" &&
-                    targetHash &&
-                    targetHash !== proposal.baseHash && (
-                      <button
-                        className="secondary"
-                        onClick={() => void rebase()}
-                      >
-                        已核对当前版本，更新修订基准
-                      </button>
+                  <Diff
+                    before={
+                      diff === "previous" ? previous?.markdown || "" : before
+                    }
+                    after={text}
+                  />
+                  {diff === "original" &&
+                    !lockedDraft &&
+                    proposal.action === "amend" &&
+                    baseChanged && (
+                      <div className="review-base-update">
+                        <p>
+                          请对照原笔记的改动。需要保留的内容可先合入待审稿，再确认更新修订基准。
+                        </p>
+                        <button
+                          className="secondary"
+                          disabled={busy}
+                          onClick={() => void rebase()}
+                        >
+                          已核对，更新修订基准
+                        </button>
+                      </div>
                     )}
                 </>
               ) : (
                 <Editor
+                  ref={reviewEditor}
                   path={proposal.path}
                   content={text}
                   source={false}
-                  readOnly={busy || Boolean(proposal.unavailable)}
+                  readOnly={busy || lockedDraft}
+                  onQuote={canContinue ? quoteDraft : undefined}
                   onChange={changeReview}
+                  onLink={(href) => {
+                    if (href.startsWith("child-note:")) {
+                      const child = proposal.childNotes?.find(
+                        (entry) => "child-note:" + entry.key === href,
+                      );
+                      if (child) setChildPreview(child);
+                    }
+                  }}
                 />
               )}
               <footer>
-                <span>可直接删改，实现部分接受。</span>
+                <span>
+                  {proposal.supersededBy ? "上一版待审稿" : "可直接编辑后确认"}
+                </span>
                 <button
                   className="secondary"
-                  disabled={busy || Boolean(proposal.unavailable)}
+                  disabled={busy || lockedDraft}
                   onClick={() => {
                     if (locked.current) return;
                     locked.current = true;
@@ -1468,7 +2002,7 @@ export function Review({
                 </button>
                 <button
                   className="primary"
-                  disabled={busy || Boolean(proposal.unavailable)}
+                  disabled={busy || lockedDraft}
                   onClick={() => void accept()}
                 >
                   <Check size={15} />
@@ -1476,8 +2010,69 @@ export function Review({
                 </button>
               </footer>
             </section>
+            {expandedChat && (
+              <ReviewDivider pane="chat" controls={reviewChatId} />
+            )}
+            {inlineChat && job && (
+              <div
+                id={reviewChatId}
+                className="review-chat-slot"
+                hidden={!expandedChat}
+              >
+                <CodexConversation
+                  key={codexRootJob(job)}
+                  jobs={jobs}
+                  initialJobId={codexRootJob(job)}
+                  refresh={refresh}
+                  review={{
+                    proposalId: proposal.id,
+                    feedback: reviewFeedback,
+                    onFeedback: updateFeedback,
+                    baseChanged,
+                    onCompareOriginal: () => void compareOriginal(),
+                    describeDraft,
+                    onOpenDraft: (draftId) => openDraft(draftId, true),
+                    onSend: continueDraft,
+                    onClose: () => setShowChat(false),
+                    options: job.snapshot.codexOptions ?? cli.defaults,
+                    catalog: cli.catalog,
+                    connection: {
+                      ready: cli.state === "ready",
+                      checking: cli.state === "checking",
+                      label: codexCliLabels[cli.state],
+                      recheck: cli.recheck,
+                    },
+                    disabled: !canContinue || busy,
+                    path: proposal.targetPath || proposal.path,
+                  }}
+                />
+              </div>
+            )}
           </div>
         </>
+      )}
+      {conversation && (
+        <Modal
+          title="Codex 对话记录"
+          wide
+          onClose={() => {
+            if (!busy) setConversation(false);
+          }}
+        >
+          <CodexConversation jobs={jobs} refresh={refresh} />
+        </Modal>
+      )}
+      {childPreview && (
+        <Modal
+          title={childPreview.title}
+          wide
+          onClose={() => setChildPreview(null)}
+        >
+          <SnapshotText
+            text={childPreview.markdown}
+            path={proposal?.targetPath || proposal?.path || ""}
+          />
+        </Modal>
       )}
     </div>
   );
@@ -1489,6 +2084,11 @@ export function Settings({
   notify,
   refresh,
 }: { onClose: () => void; capabilities: Record<string, boolean> } & Common) {
+  const canSaveDefaults = capabilities.codexCli && !window.workbench?.panel;
+  const cli = useCodexCliStatus(capabilities.codexCli, canSaveDefaults);
+  const [pickedCodex, setPickedCodex] = useState<CodexOptions>();
+  const [savingCodex, setSavingCodex] = useState(false);
+  const codexDefaults = pickedCodex ?? cli.defaults;
   const [baseUrl, setBaseUrl] = useState("https://api.openai.com/v1"),
     [model, setModel] = useState(""),
     [key, setKey] = useState(""),
@@ -1532,6 +2132,19 @@ export function Settings({
       setBusy(false);
     }
   };
+  async function saveCodexDefaults() {
+    setSavingCodex(true);
+    try {
+      await api("PUT", "/settings/codex-cli", codexDefaults);
+      setPickedCodex(undefined);
+      cli.recheck();
+      notify("已保存 Codex CLI 默认配置。");
+    } catch (error) {
+      notify((error as Error).message, true);
+    } finally {
+      setSavingCodex(false);
+    }
+  }
   return (
     <Modal title="工作台设置" onClose={onClose}>
       <CaptureShortcutSettings />
@@ -1564,9 +2177,45 @@ export function Settings({
         </div>
         <p className="muted">偏好保存在本机，重新打开后沿用。</p>
       </section>
+      {capabilities.codexCli && (
+        <section className="settings-section">
+          <div className="section-label">本机 Codex CLI（首选）</div>
+          <p className="muted">
+            沿用本机 Codex 登录，确认整理后将所选材料交给
+            Codex，结果进入待审稿。
+          </p>
+          <div className="executor-status">
+            <span role="status">{codexCliLabels[cli.state]}</span>
+            <button
+              className="secondary"
+              disabled={cli.state === "checking"}
+              onClick={cli.recheck}
+            >
+              重新检查
+            </button>
+          </div>
+          {canSaveDefaults && (
+            <>
+              <CodexOptionsFields
+                catalog={cli.catalog}
+                value={codexDefaults}
+                disabled={savingCodex || cli.state === "checking"}
+                onChange={setPickedCodex}
+              />
+              <button
+                className="secondary"
+                disabled={savingCodex || cli.state === "checking"}
+                onClick={() => void saveCodexDefaults()}
+              >
+                {savingCodex ? "正在保存…" : "保存为默认配置"}
+              </button>
+            </>
+          )}
+        </section>
+      )}
       {window.workbench?.panel ? (
         <section className="settings-section">
-          <div className="section-label">模型接口</div>
+          <div className="section-label">模型 API（备用）</div>
           <p className="muted">
             模型和密钥请在桌面工作台设置。此面板沿用已保存的配置；使用 Codex
             整理无需填写 API 密钥。
@@ -1576,7 +2225,7 @@ export function Settings({
         <section className="settings-section">
           <div className="section-label">
             <Settings2 size={15} />
-            模型接口
+            模型 API（备用）
           </div>
           <p className="muted">
             仅在你开始整理时发送选定材料。测试连接只发送一条固定短句。
