@@ -163,14 +163,8 @@ try {
   ).toContainText("title: 参考笔记");
   await referenceDetails.locator(".snapshot-metadata > summary").click();
 
-  await page
-    .locator(".source-review > .evidence-item > summary")
-    .nth(0)
-    .click();
-  await page
-    .locator(".source-review > .evidence-item > summary")
-    .nth(1)
-    .click();
+  await page.getByText(/^\d+\. 文献标注$/).click();
+  await page.getByText(/^\d+\. 噪声推导$/).click();
   await page.locator(".source-review").evaluate((element) => {
     element.scrollTop = 0;
   });
