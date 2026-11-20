@@ -1,5 +1,5 @@
 import MarkdownIt from "markdown-it";
-import type { LinkStyle } from "../shared/note-links.ts";
+import { PARENT_NOTE_LABEL, type LinkStyle } from "./note-links.ts";
 
 export type MarkdownLink = {
   style: LinkStyle;
@@ -7,6 +7,8 @@ export type MarkdownLink = {
   /** Destination only, excluding brackets, alias, heading and title. */
   from: number;
   to: number;
+  /** First character of a displayed embed or image, when present. */
+  imageAt?: number;
 };
 type Destination = { from: number; to: number; target: string };
 type LinkEnvironment = {
@@ -45,10 +47,12 @@ for (const name of ["link", "image"]) {
       .slice(tokenStart)
       .find((t) => t.type === (name === "image" ? "image" : "link_open"));
     if (!token) return accepted;
+    const image = name === "image" ? { imageAt: env.sourceOffset + start } : {};
     const label = token.meta?.label as string | undefined;
     if (label) {
       const destination = env.definitions.get(label);
-      if (destination) env.links.push({ style: "markdown", ...destination });
+      if (destination)
+        env.links.push({ style: "markdown", ...destination, ...image });
     } else {
       const labelEnd = state.md.helpers.parseLinkLabel(
         state,
@@ -71,6 +75,7 @@ for (const name of ["link", "image"]) {
           target: destination.str,
           from: env.sourceOffset + from + (angled ? 1 : 0),
           to: env.sourceOffset + destination.pos - (angled ? 1 : 0),
+          ...image,
         });
       }
     }
@@ -102,6 +107,7 @@ parser.inline.ruler.before("link", "vault_wiki_link", (state, silent) => {
         target,
         from: env.sourceOffset + from,
         to: env.sourceOffset + from + target.length,
+        ...(embedded ? { imageAt: env.sourceOffset + start } : {}),
       });
     const token = state.push("text", "", 0);
     token.content = state.src.slice(start, end + 2);
@@ -215,8 +221,39 @@ export function markdownLinks(content: string): MarkdownLink[] {
       ...link,
       from: offsets?.[link.from] ?? link.from,
       to: offsets?.[link.to] ?? link.to,
+      ...(link.imageAt === undefined
+        ? {}
+        : { imageAt: offsets?.[link.imageAt] ?? link.imageAt }),
     };
-    unique.set(`${result.from}:${result.to}`, result);
+    const key = String(result.from) + ":" + result.to;
+    if (unique.get(key)?.imageAt === undefined) unique.set(key, result);
   }
   return [...unique.values()].sort((a, b) => a.from - b.from);
+}
+
+export function markdownBodyStart(content: string) {
+  return (
+    content.match(/^\uFEFF?---\r?\n([\s\S]*?)(?<=\n)---(?:\r?\n|$)/)?.[0]
+      .length || 0
+  );
+}
+
+export function noteBodyLinks(content: string) {
+  const start = markdownBodyStart(content);
+  return markdownLinks(content.slice(start)).map((link) => ({
+    ...link,
+    from: link.from + start,
+    to: link.to + start,
+    ...(link.imageAt === undefined ? {} : { imageAt: link.imageAt + start }),
+  }));
+}
+
+export function findParentBacklink(content: string) {
+  const prefix = "[" + PARENT_NOTE_LABEL + "](";
+  if (!content.includes(prefix)) return undefined;
+  return noteBodyLinks(content).find(
+    (link) =>
+      link.style === "markdown" &&
+      content.slice(link.from - prefix.length, link.from) === prefix,
+  )?.target;
 }

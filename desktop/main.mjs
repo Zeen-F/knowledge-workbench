@@ -437,9 +437,9 @@ ipcMain.handle("capture:select", async (event, rect) => {
   }
 });
 const routes = {
-  GET: /^\/(status|notes|note|history|relations|resolve-link|collection-tasks|captures|jobs|proposals|settings|paperdesk\/source)(?:\?.*)?$/,
-  POST: /^\/(refresh|notes|note\/move|history\/restore|assets|collection-tasks|collection-tasks\/state|captures|captures\/(trash|restore)|jobs|jobs\/preview|jobs\/[^/]+\/(run|pause|share)|proposals\/[^/]+\/(accept|reject|rebase)|settings\/provider\/test)$/,
-  PUT: /^\/(note|draft|settings\/(provider|paperdesk|appearance)|proposals\/[^/]+)$/,
+  GET: /^\/(status|notes|note|history|relations|resolve-link|collection-tasks|captures|jobs|codex\/conversation|proposals|settings|settings\/codex-cli|paperdesk\/source)(?:\?.*)?$/,
+  POST: /^\/(refresh|notes|note\/(move|title|trash|restore|optimize|optimize\/preview)|history\/restore|assets|collection-tasks|collection-tasks\/state|captures|captures\/(trash|restore)|jobs|jobs\/preview|jobs\/[^/]+\/(run|pause|share)|proposals\/[^/]+\/(accept|reject|rebase|continue)|settings\/provider\/test)$/,
+  PUT: /^\/(note|draft|settings\/(provider|paperdesk|appearance|codex-cli)|proposals\/[^/]+)$/,
   DELETE: /^\/draft$/,
 };
 ipcMain.handle("workbench:request", async (event, input) => {

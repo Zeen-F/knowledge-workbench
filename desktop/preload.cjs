@@ -8,12 +8,10 @@ ipcRenderer.on("workbench:flush", async (_event, id) => {
     ipcRenderer.send("workbench:flushed", { id, error: error.message });
   }
 });
+const invokeResult = (method, route, body) =>
+  ipcRenderer.invoke("workbench:request", { method, route, body });
 async function request(method, route, body) {
-  const response = await ipcRenderer.invoke("workbench:request", {
-    method,
-    route,
-    body,
-  });
+  const response = await invokeResult(method, route, body);
   if (response.error) {
     const error = new Error(response.error);
     Object.assign(error, {
@@ -27,6 +25,7 @@ async function request(method, route, body) {
 }
 contextBridge.exposeInMainWorld("workbench", {
   invoke: request,
+  invokeResult,
   chooseVault: () => request("DESKTOP", "/vault/choose"),
   capture: (taskId) => request("DESKTOP", "/capture", {taskId}),
   openExternal: (url) => request("DESKTOP", "/external", { url }),

@@ -15,6 +15,8 @@ export function openDatabase(dir: string) {
     CREATE TABLE IF NOT EXISTS relations(from_path TEXT NOT NULL,to_ref TEXT NOT NULL,kind TEXT NOT NULL,PRIMARY KEY(from_path,to_ref,kind));
     CREATE TABLE IF NOT EXISTS extractions(path TEXT PRIMARY KEY,source_id TEXT NOT NULL,source_hash TEXT NOT NULL,body TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,state TEXT NOT NULL,executor TEXT NOT NULL,created_at TEXT NOT NULL,error TEXT,snapshot TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS codex_threads(root_job_id TEXT PRIMARY KEY REFERENCES jobs(id),thread_id TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS codex_review_turns(job_id TEXT PRIMARY KEY REFERENCES jobs(id),turn_id TEXT,text TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS job_items(job_id TEXT NOT NULL REFERENCES jobs(id),source_id TEXT NOT NULL,state TEXT NOT NULL,output TEXT,error TEXT,PRIMARY KEY(job_id,source_id));
     CREATE TABLE IF NOT EXISTS proposals(id TEXT PRIMARY KEY,job_id TEXT NOT NULL,status TEXT NOT NULL,path TEXT NOT NULL,body TEXT NOT NULL,request_id TEXT NOT NULL UNIQUE,accepted_path TEXT);
     CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);

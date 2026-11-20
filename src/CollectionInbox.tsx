@@ -149,7 +149,9 @@ export function CollectionInbox(props: Props) {
             (c) => (c.ref.taskId || "history") === active.id,
           )}
           jobs={props.jobs.filter(
-            (j) => (j.snapshot.taskId || "history") === active.id,
+            (j) =>
+              !j.snapshot.noteRevision &&
+              (j.snapshot.taskId || "history") === active.id,
           )}
         />
       ) : (

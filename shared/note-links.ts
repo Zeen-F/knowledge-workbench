@@ -1,5 +1,6 @@
 /** Canonical vault-relative resolution, shared by navigation, relations and moves. */
 export type LinkStyle = "wiki" | "markdown";
+export const PARENT_NOTE_LABEL = "返回父笔记";
 export function normalizeNotePath(value: string) {
   const parts: string[] = [];
   for (const part of value.replaceAll("\\", "/").split("/")) {
