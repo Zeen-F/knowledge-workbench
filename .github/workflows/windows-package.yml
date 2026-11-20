@@ -49,7 +49,7 @@ jobs:
         run: node scripts/test-installer.mjs "$env:KWB_TEST_EXE" "$env:KWB_TEST_INSTALLER"
       - uses: actions/checkout@v4
         with:
-          repository: Zeen-F/PDF_Vibecoding
+          repository: Zeen-F/XiReader
           ref: e0b014d17dbb0e4330a0ca72c7e7943dab2f7e5a
           path: .local/paperdesk-package
           persist-credentials: false

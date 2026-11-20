@@ -1,18 +1,18 @@
 # 知识工作台 · Knowledge Workbench
 
-面向模拟 IC 学习与科研写作的 Windows / macOS 主编辑器：随时记下想法和截图，把阅读材料整理成有来源、可修订的知识。Markdown 与附件保存在用户选择的 Obsidian 仓库；[纸间 Paperdesk](https://github.com/Zeen-F/PDF_Vibecoding) 负责 PDF 阅读和批注，知识工作台负责收集、写作与 AI 草稿审核。
+面向模拟 IC 学习与科研写作的 Windows / macOS 主编辑器：随时记下想法和截图，把阅读材料整理成有来源、可修订的知识。Markdown 与附件保存在用户选择的 Obsidian 仓库；[XiReader](https://github.com/Zeen-F/XiReader) 负责 PDF 阅读和批注，知识工作台负责收集、写作与 AI 草稿审核。
 
 这是通过与 AI 对话、反复试用和修改完成的 **vibecoding（vibe coding）** 项目，目前仍处于早期预览。欢迎反馈问题和参与改进；AI 生成的草稿需要人工核对，保存草稿不代表科学结论已验证。
 
 ## 下载、启动与升级
 
-本次桌面预览版为 **0.1.0-alpha.6**，配套 Codex 插件为 **0.1.0-alpha.7**。在 [Release 页面](https://github.com/Zeen-F/knowledge-workbench/releases/tag/v0.1.0-alpha.6) 下载 `KnowledgeWorkbench-0.1.0-alpha.6-win-x64.exe`；可下载文件与校验值以页面实际提供的资产为准。材料审核改进和可选山岚 V2 不会自动进入旧安装包。
+本次桌面预览版为 **0.1.0-alpha.7**，配套 Codex 插件为 **0.1.0-alpha.8**。在 [Release 页面](https://github.com/Zeen-F/knowledge-workbench/releases/tag/v0.1.0-alpha.7) 下载 `KnowledgeWorkbench-0.1.0-alpha.7-win-x64.exe`；可下载文件与校验值以页面实际提供的资产为准。本版新增学习记录模板、笔记链接预览和 Codex 修订审核。
 
 运行安装器后从原桌面快捷方式打开工作台，首次选择包含 `.obsidian` 的知识库根目录。完整安装包包含运行时，日常使用无需另装 Node.js。知识库和笔记保留在原位置，不放进源码目录或临时打包目录。
 
 升级前保存并正常退出旧工作台，备份 Markdown 和附件，正常断开占用安装目录的旧插件连接。安装器发现占用会退出并保留编辑窗口，不强制结束进程。更新完整应用后继续使用指向正式安装目录的快捷方式，再准备并核对插件；不要只复制 EXE。当前没有自动更新。
 
-Apple Silicon Mac 的 [0.1.0-alpha.6 DMG](https://github.com/Zeen-F/knowledge-workbench/releases/download/v0.1.0-alpha.6/KnowledgeWorkbench-0.1.0-alpha.6-mac-arm64.dmg) 将完整应用拖入「应用程序」，也可从源码构建。Mac 使用 Command 快捷键，关闭窗口后可从 Dock 重开，退出使用 ⌘Q；截图需要屏幕录制权限。当前预览构建未做 Apple 公证，详见 [Mac 适配说明](docs/macos.md)。
+Apple Silicon Mac 的 [0.1.0-alpha.7 DMG](https://github.com/Zeen-F/knowledge-workbench/releases/download/v0.1.0-alpha.7/KnowledgeWorkbench-0.1.0-alpha.7-mac-arm64.dmg) 将完整应用拖入「应用程序」，也可从源码构建。Mac 使用 Command 快捷键，关闭窗口后可从 Dock 重开，退出使用 ⌘Q；截图需要屏幕录制权限。当前预览构建未做 Apple 公证，详见 [Mac 适配说明](docs/macos.md)。
 
 ## 写作与材料审核
 
